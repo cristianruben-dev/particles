@@ -1,0 +1,8 @@
+node_modules
+dist
+.DS_Store
+*.local
+
+# Texturas de alta resolución: se descargan a mano (ver docs/ASSETS.md)
+public/textures/**/*_8k.*
+public/textures/**/*_16k.*

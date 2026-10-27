@@ -1,0 +1,22 @@
+{
+  "name": "particles-solar-system",
+  "version": "0.0.0",
+  "description": "Sistema solar navegable hecho de partículas (Three.js WebGPU)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "type": "module",
+  "dependencies": {
+    "lil-gui": "^0.21.0",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  },
+  "private": true
+}
