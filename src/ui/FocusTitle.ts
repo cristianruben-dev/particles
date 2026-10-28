@@ -71,15 +71,19 @@ export class FocusTitle {
     this.el.append(this.kicker, this.name, readouts, actionsRow);
   }
 
+  /** Entrada animada del nombre. */
+  replay(): void {
+    this.el.classList.remove('enter');
+    void this.el.offsetWidth;
+    this.el.classList.add('enter');
+  }
+
   update(s: TitleState): void {
     if (s.id !== this.id) {
       this.id = s.id;
       setText(this.kicker, s.kicker);
       setText(this.name, s.name);
-      // Entrada animada del nombre nuevo.
-      this.el.classList.remove('enter');
-      void this.el.offsetWidth;
-      this.el.classList.add('enter');
+      this.replay();
     }
     setQuantity(this.altitude, distanceParts(s.altitudeKm));
     if (s.speedKmS !== null) {

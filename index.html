@@ -2,12 +2,224 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Particles — Sistema Solar</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Un sistema solar navegable hecho de partículas: posiciones reales, mapas de NASA y aterrizaje hasta el suelo." />
+    <title>Sistema Solar · partículas</title>
+    <style>
+      /* Pantalla de carga: va aquí para verse antes de que llegue el código (docs/ARQUITECTURA.md §11). */
+      #loader {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(120% 90% at 50% 50%, #0b0c16 0%, #030308 60%, #000 100%);
+        color: #eef1fb;
+        font-family: 'Geist Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+        transition: opacity 1.4s cubic-bezier(0.2, 0.75, 0.2, 1);
+      }
+      #loader.out {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #loader canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .loader-text {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: max(9vh, 64px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        text-align: center;
+        transition: opacity 0.8s, transform 1s cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      #loader.out .loader-text {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      .loader-kicker {
+        margin: 0;
+        font-size: 10.5px;
+        font-weight: 500;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: rgba(238, 241, 251, 0.46);
+      }
+      .loader-title {
+        margin: 0;
+        font: 400 clamp(44px, 7vw, 84px) / 1 'Instrument Serif', 'Iowan Old Style', 'Times New Roman', serif;
+        letter-spacing: -0.005em;
+        opacity: 0;
+        transition: opacity 1.2s;
+      }
+      .fonts .loader-title {
+        opacity: 1;
+      }
+      .loader-bar {
+        width: 200px;
+        height: 2px;
+        margin-top: 14px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+      }
+      .loader-bar i {
+        display: block;
+        height: 100%;
+        background: linear-gradient(90deg, rgba(255, 210, 122, 0.2), #ffd27a);
+        box-shadow: 0 0 10px #ffd27a;
+        transform-origin: left;
+        transform: scaleX(0);
+        transition: transform 0.6s cubic-bezier(0.2, 0.75, 0.2, 1);
+      }
+      .loader-status {
+        margin: 2px 0 0;
+        min-height: 1.4em;
+        font: 12px ui-monospace, 'SF Mono', Menlo, monospace;
+        color: rgba(238, 241, 251, 0.55);
+      }
+      .loader-error .loader-status {
+        max-width: 440px;
+        padding: 0 24px;
+        font-family: inherit;
+        font-size: 14px;
+        line-height: 1.6;
+        color: #ffb4a8;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #loader,
+        .loader-text,
+        .loader-title {
+          transition: none;
+        }
+      }
+    </style>
   </head>
   <body>
     <canvas id="scene"></canvas>
     <div id="hud"></div>
+    <div id="loader" role="status" aria-live="polite">
+      <canvas aria-hidden="true"></canvas>
+      <div class="loader-text">
+        <p class="loader-kicker">Un sistema solar hecho de partículas</p>
+        <h1 class="loader-title">Sistema Solar</h1>
+        <div class="loader-bar"><i></i></div>
+        <p class="loader-status">Reuniendo el polvo…</p>
+      </div>
+    </div>
+    <script>
+      // Disco de polvo que se agrupa en anillos según avanza la carga; al terminar se
+      // condensa hacia el centro. API para la app: window.__loader.set(p, texto), finish(), error(texto).
+      (function () {
+        var root = document.getElementById('loader');
+        var canvas = root.querySelector('canvas');
+        var ctx = canvas.getContext('2d');
+        var bar = root.querySelector('.loader-bar i');
+        var status = root.querySelector('.loader-status');
+        var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+        var dpr = Math.min(window.devicePixelRatio || 1, 2);
+        var w = 0, h = 0, scale = 1;
+        var N = Math.min(2600, Math.round((innerWidth * innerHeight) / 650));
+        var RINGS = [0.2, 0.28, 0.36, 0.45, 0.6, 0.74, 0.86, 0.96];
+        var COLORS = ['255,214,150', '255,190,140', '220,200,190', '170,195,255', '255,230,200', '200,170,150'];
+        var dust = [];
+        var seed = 7;
+        function rand() {
+          seed = (seed * 16807) % 2147483647;
+          return (seed - 1) / 2147483646;
+        }
+        for (var i = 0; i < N; i++) {
+          var r = 0.12 + Math.pow(rand(), 0.8) * 0.92;
+          var ring = RINGS[0];
+          for (var k = 0; k < RINGS.length; k++) if (Math.abs(RINGS[k] - r) < Math.abs(ring - r)) ring = RINGS[k];
+          dust.push({ r: r, ring: ring + (rand() - 0.5) * 0.012, a: rand() * Math.PI * 2, z: (rand() - 0.5) * 0.06, size: 0.5 + rand() * rand() * 1.8, color: COLORS[Math.floor(rand() * COLORS.length)], alpha: 0.25 + rand() * 0.65 });
+        }
+        var progress = 0, shown = 0, finishing = 0, done = false, last = performance.now(), t0 = last;
+        function resize() {
+          w = innerWidth;
+          h = innerHeight;
+          canvas.width = w * dpr;
+          canvas.height = h * dpr;
+          scale = Math.min(w, h) * 0.46;
+        }
+        resize();
+        addEventListener('resize', resize);
+        function frame(now) {
+          if (done) return;
+          var dt = Math.min(0.05, (now - last) / 1000);
+          last = now;
+          shown += (progress - shown) * (1 - Math.exp(-dt * 3));
+          if (finishing > 0) finishing = Math.min(1, finishing + dt / 1.6);
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          var cx = w / 2, cy = h * 0.44;
+          var gather = still ? 0 : shown * 0.85;
+          var fall = finishing * finishing * finishing;
+          // Protosol: crece con la carga y destella al final.
+          var core = scale * (0.035 + 0.05 * shown + 0.5 * fall * (1 - fall));
+          var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, core * 6);
+          g.addColorStop(0, 'rgba(255,240,210,' + (0.9 * (1 - fall * 0.3)) + ')');
+          g.addColorStop(0.15, 'rgba(255,200,120,0.45)');
+          g.addColorStop(1, 'rgba(255,160,60,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath();
+          ctx.arc(cx, cy, core * 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalCompositeOperation = 'lighter';
+          for (var i = 0; i < dust.length; i++) {
+            var d = dust[i];
+            // Kepler: más deprisa cuanto más cerca del centro.
+            if (!still) d.a += dt * 0.22 * Math.pow(d.r, -1.5) * (1 + 2 * fall);
+            var r = d.r + (d.ring - d.r) * gather;
+            r *= 1 - 0.97 * fall;
+            var x = cx + Math.cos(d.a) * r * scale;
+            var y = cy + (Math.sin(d.a) * 0.36 + d.z) * r * scale;
+            var a = d.alpha * Math.min(1, (now - t0) / 1200) * (1 - fall * 0.6);
+            ctx.fillStyle = 'rgba(' + d.color + ',' + a.toFixed(3) + ')';
+            ctx.fillRect(x, y, d.size, d.size);
+          }
+          ctx.globalCompositeOperation = 'source-over';
+          requestAnimationFrame(frame);
+        }
+        requestAnimationFrame(frame);
+        window.__loader = {
+          set: function (p, text) {
+            progress = Math.max(progress, p);
+            bar.style.transform = 'scaleX(' + progress.toFixed(3) + ')';
+            if (text) status.textContent = text;
+          },
+          finish: function () {
+            progress = 1;
+            bar.style.transform = 'scaleX(1)';
+            finishing = 0.0001;
+            return new Promise(function (resolve) {
+              setTimeout(function () {
+                root.classList.add('out');
+                resolve();
+                setTimeout(function () {
+                  done = true;
+                  root.remove();
+                }, 1500);
+              }, still ? 0 : 1100);
+            });
+          },
+          error: function (text) {
+            root.classList.add('loader-error');
+            status.textContent = text;
+          },
+        };
+        // El título espera a su fuente (la carga la app); si tarda, sale con la de respaldo.
+        setTimeout(function () { root.classList.add('fonts'); }, 2500);
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

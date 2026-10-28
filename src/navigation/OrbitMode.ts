@@ -69,6 +69,8 @@ export class OrbitMode implements NavigationMode {
     endDir: Dir;
     /** Cuánto sube la cámara sobre el plano a mitad de viaje (rad). */
     arc: number;
+    /** Intensidad del warp (0–1): más cuanto más cambia la escala. */
+    warp: number;
   } | null = null;
 
   /**
@@ -117,6 +119,15 @@ export class OrbitMode implements NavigationMode {
   get travel(): { from: CelestialBody; to: CelestialBody; progress: number } | null {
     const tr = this.transition;
     return tr ? { from: tr.from, to: this.focus, progress: easeInOut(tr.t) } : null;
+  }
+
+  /** Efecto warp del viaje (0–1): sube y baja con la velocidad del movimiento. */
+  get warp(): number {
+    const tr = this.transition;
+    if (!tr) return 0;
+    // La derivada de la curva de viaje (máxima a mitad), normalizada.
+    const speed = Math.sin(Math.PI * Math.min(1, Math.max(0, (tr.t - 0.08) / 0.84)));
+    return tr.warp * speed * speed;
   }
 
   /** true mientras baja o sube con los botones. */
@@ -229,6 +240,7 @@ export class OrbitMode implements NavigationMode {
         startDir,
         endDir: fromAngles(endAz, endEl),
         arc: 0.45 * Math.min(1, Math.log10(Math.max(ratio, 1)) / 3),
+        warp: Math.min(1, Math.log10(Math.max(ratio, 1)) / 2.5),
       };
       this.azimuth = this.targetAzimuth = endAz;
       this.elevation = this.targetElevation = endEl;

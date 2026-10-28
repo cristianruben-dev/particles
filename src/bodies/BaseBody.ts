@@ -26,6 +26,12 @@ const UPGRADE_SECONDS = 1.4;
 const MARKER_PX = 3.5;
 
 export abstract class BaseBody implements CelestialBody {
+  /**
+   * Mientras es true, nadie se condensa: la pantalla de carga lo suelta al irse y todos los
+   * cuerpos se forman a la vez desde el polvo, a la vista.
+   */
+  static formationHeld = false;
+
   /** Posición, escala (radio en escena) y orientación del polo. */
   readonly object3d = new THREE.Group();
   /** Hijo que gira sobre el eje del cuerpo. La superficie cuelga de aquí. */
@@ -160,7 +166,7 @@ export abstract class BaseBody implements CelestialBody {
       void this.loadTier('full');
     }
 
-    if (preview && preview.appear.value < 1) {
+    if (preview && preview.appear.value < 1 && !BaseBody.formationHeld) {
       preview.appear.value = Math.min(1, preview.appear.value + ctx.dt / APPEAR_SECONDS);
     }
     if (full) {

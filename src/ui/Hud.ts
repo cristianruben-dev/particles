@@ -137,6 +137,12 @@ export class Hud {
     });
   }
 
+  /** Entrada de la interfaz al irse la pantalla de carga. */
+  reveal(): void {
+    this.title.replay();
+    this.coach.start(3);
+  }
+
   /** Atajos propios de la interfaz. Devuelve true si la tecla era suya. */
   handleKey(e: KeyboardEvent): boolean {
     const key = e.key.toLowerCase();

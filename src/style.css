@@ -97,6 +97,13 @@ kbd {
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+  transition: opacity 1.4s var(--ease) 0.4s;
+}
+
+/* Mientras está la pantalla de carga, la interfaz espera. */
+.booting #hud {
+  opacity: 0;
+  visibility: hidden;
 }
 
 .ui-layer {

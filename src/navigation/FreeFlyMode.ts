@@ -50,8 +50,10 @@ export class FreeFlyMode implements NavigationMode {
   cruise = 1;
   /** Velocidad real respecto al ancla (km/s), suavizada, para la UI. */
   speedKmS = 0;
-  /** 0–1: cuánto turbo se está usando (para el efecto warp). */
+  /** 0–1: cuánto turbo se está usando. */
   boost = 0;
+  /** Efecto warp (0–1): turbo hacia delante. */
+  warp = 0;
 
   private readonly keys = new Set<string>();
   private dragging = false;
@@ -167,6 +169,8 @@ export class FreeFlyMode implements NavigationMode {
       (this.keys.has('s') ? 1 : 0) - (this.keys.has('w') ? 1 : 0),
     );
     if (input.lengthSq() > 1) input.normalize();
+    const ahead = Math.max(0, -input.z) * this.boost;
+    this.warp += (ahead * 0.35 - this.warp) * (1 - Math.exp(-dt * 3));
     const lookScene = this.lookScene.copy(this.look);
     if (spin) lookScene.premultiply(spin);
     const desired = input.applyQuaternion(lookScene).multiplyScalar(speed);

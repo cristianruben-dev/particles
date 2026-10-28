@@ -19,7 +19,7 @@ import { disturbanceLook } from '../particles/Disturbance';
 import { particleLook } from '../particles/LodManager';
 import { updatePixelAngle } from '../particles/nodes';
 import type { ParticleField } from '../particles/ParticleField';
-import { createPipeline, type BloomControls } from '../postfx/Pipeline';
+import { createPipeline, warpLook, type BloomControls } from '../postfx/Pipeline';
 import { ScaleSystem } from '../scale/ScaleSystem';
 import { surfaceBudget } from '../surface/Surface';
 import { createDebugGui } from '../ui/DebugGui';
@@ -36,6 +36,9 @@ const formatHours = (h: number) => (h >= 48 ? `${Math.round(h / 24)} días` : `$
 
 /** Por debajo de esta altitud (radios) la acción principal es volver a la órbita. */
 const NEAR_GROUND_RADII = 0.05;
+
+const BASE_FOV = 50;
+const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
 
 /** Teclas del vuelo libre (las gestiona `FreeFlyMode`). */
 const FLY_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
@@ -67,19 +70,27 @@ export class Engine {
   private orbits!: OrbitLines;
   private readonly belts: AsteroidBelt[] = [];
   private stars: ParticleField | null = null;
+  private resolveStars!: () => void;
+  /** Se resuelve con las estrellas ya en la escena (o si no se pudieron cargar). */
+  readonly starsReady = new Promise<void>((resolve) => (this.resolveStars = resolve));
   private lastFrameMs = performance.now();
   /** Cursor sobre el canvas en coordenadas normalizadas, o null si está fuera. */
   private pointerNdc: THREE.Vector2 | null = null;
   private readonly pointerRaycaster = new THREE.Raycaster();
 
-  async start(canvas: HTMLCanvasElement, hudEl: HTMLElement): Promise<void> {
+  /**
+   * @param progress Avance de la carga (0–1) y qué se está haciendo, para la pantalla de carga.
+   */
+  async start(canvas: HTMLCanvasElement, hudEl: HTMLElement, progress: (p: number, text: string) => void = () => undefined): Promise<void> {
     this.quality = new Quality(await detectDevice());
+    progress(0.08, 'Preparando el motor gráfico…');
     const profile = this.quality.profile;
     this.applyLook(profile);
     ({ renderer: this.renderer, isWebGLFallback: this.isWebGLFallback } = await createRenderer(canvas, profile.msaa, profile.pixelRatio));
     ({ pipeline: this.pipeline, bloom: this.bloom } = createPipeline(this.renderer, this.scene, this.rig.camera));
     this.bloom.setResolutionScale(profile.bloomScale);
     this.quality.onChange((p) => this.applyQuality(p));
+    progress(0.16, 'Horneando los planetas…');
 
     this.scene.backgroundNode = horizonBackground();
     this.createBodies();
@@ -145,7 +156,6 @@ export class Engine {
     });
     this.labels = new Labels(hudEl, this.bodies, (body) => this.focus(body));
     this.hud.setActiveBody(earth.data.id, earth.landable);
-    this.hud.coach.start(3.5);
     earth.setFocused(true);
     this.bindKeys();
     this.bindPointer(canvas);
@@ -164,7 +174,7 @@ export class Engine {
     createStarfield().then((stars) => {
       this.stars = stars;
       this.scene.add(stars.object);
-    });
+    }).finally(() => this.resolveStars());
 
     this.onResize();
     window.addEventListener('resize', this.onResize);
@@ -176,6 +186,11 @@ export class Engine {
     this.setReference(body);
     this.orbit.focusOn(body, this.rig);
     this.hud.coach.dismiss();
+  }
+
+  /** La pantalla de carga se ha ido: entra la interfaz. */
+  revealed(): void {
+    this.hud.reveal();
   }
 
   /** Cuerpo de referencia: el enfocado en órbita o el ancla en vuelo libre. */
@@ -386,6 +401,7 @@ export class Engine {
     layoutSystem(this.bodies, this.clock.timeMs, this.scale);
     for (const body of this.bodies) body.orient(this.clock.timeMs);
     this.rig.update(dt);
+    this.updateWarp();
 
     let pointer: THREE.Vector3 | null = null;
     this.rig.camera.updateMatrixWorld();
@@ -452,10 +468,24 @@ export class Engine {
     }, now);
   };
 
+  /** Warp de los viajes (§10) y un ligero aumento del campo de visión en su punto álgido. */
+  private updateWarp(): void {
+    let w = this.flying ? this.fly.warp : this.orbit.warp;
+    if (REDUCED_MOTION.matches) w *= 0.3;
+    warpLook.amount.value = w;
+    const fov = BASE_FOV + 9 * w;
+    if (Math.abs(this.rig.camera.fov - fov) > 0.01) {
+      this.rig.camera.fov = fov;
+      this.rig.camera.updateProjectionMatrix();
+      updatePixelAngle(this.rig.camera, window.innerHeight);
+    }
+  }
+
   private onResize = (): void => {
     if (window.innerWidth === 0 || window.innerHeight === 0) return;
     this.rig.camera.aspect = window.innerWidth / window.innerHeight;
     this.rig.camera.updateProjectionMatrix();
+    warpLook.aspect.value = this.rig.camera.aspect;
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     updatePixelAngle(this.rig.camera, window.innerHeight);
   };
