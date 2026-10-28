@@ -62,6 +62,8 @@ export interface SurfacePreset {
   /** Mapa de alturas de más resolución para la superficie (si no, `textures.height`). */
   height?: string;
   heightSize?: { width: number; height: number };
+  /** Altura normalizada del radio medio en ese mapa (si no, `heightReference`). */
+  reference?: number;
 }
 
 const tex = (body: string, file: string) => `/textures/${body}/${file}`;
@@ -102,10 +104,14 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
   moon: {
     count: 400_000,
     textures: { albedo: tex('moon', 'albedo_2k.jpg'), height: tex('moon', 'height_1k.jpg') },
-    heightReference: 0.5,
+    heightReference: 0.453,
     reliefScale: 0.04,
-    // LOLA de 16 bits (−10 km → 0, +10 km → 1): mismo 0,5 de referencia que el mapa del globo.
-    surface: { relief: 0.02, roughness: 0.045, height: tex('moon', 'height_4k.u16'), heightSize: { width: 4096, height: 2048 } },
+    // LOLA de 16 bits (−10 km → 0, +10 km → 1, radio medio en 0,5). El mapa de 8 bits del globo
+    // tiene la misma escala con el radio medio en 0,453 (medido): así no salta en el relevo.
+    surface: {
+      relief: 0.02, roughness: 0.045, reference: 0.5,
+      height: tex('moon', 'height_4k.u16'), heightSize: { width: 4096, height: 2048 },
+    },
   },
   mars: {
     count: 800_000,

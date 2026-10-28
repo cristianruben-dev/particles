@@ -7,7 +7,7 @@
  */
 import * as THREE from 'three/webgpu';
 import type { Node } from 'three/webgpu';
-import { mix, positionWorldDirection, smoothstep, uniform } from 'three/tsl';
+import { float, mix, positionWorldDirection, smoothstep, step, uniform } from 'three/tsl';
 
 export const horizon = {
   /** Vertical del lugar en mundo (del centro del cuerpo a la cámara). */
@@ -25,6 +25,14 @@ export const aboveHorizon = (dir: Node<'vec3'>) => {
   const h = dir.dot(horizon.up);
   return smoothstep(horizon.dip.sub(0.01), horizon.dip.add(0.03), h);
 };
+
+/**
+ * 1 sobre el horizonte o en el espacio, 0 bajo el horizonte cuando hay suelo: para lo que
+ * está lejos (puntos, órbitas, asteroides), que si no se vería entre las partículas del terreno.
+ * `world` = posición en mundo (la cámara está en el origen).
+ */
+export const horizonMask = (world: Node<'vec3'>) =>
+  mix(float(1), aboveHorizon(world.normalize()), step(0.001, horizon.amount));
 
 /** Fondo de la escena: negro en el espacio; cielo y suelo cerca de un cuerpo. */
 export function horizonBackground() {

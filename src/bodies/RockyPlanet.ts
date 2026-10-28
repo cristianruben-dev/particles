@@ -70,7 +70,7 @@ export class RockyPlanet extends BaseBody {
     this.terrainParams = preset.surface
       ? {
           relief: preset.surface.relief,
-          reference: preset.heightReference,
+          reference: preset.surface.reference ?? preset.heightReference,
           waterBelow: preset.waterBelow ?? -1,
           roughness: preset.surface.roughness,
           radiusKm: data.radiusKm,
@@ -302,6 +302,15 @@ export class RockyPlanet extends BaseBody {
       });
       this.spin.add(this.surface.group);
     } else if (this.surface && (!this.isFocused || !full || fraction < SURFACE_EXIT)) {
+      // Al subir: el globo vuelve y los chunks se desvanecen antes de soltarse.
+      if (!full) {
+        this.surface.dispose(ctx.renderer);
+        this.surface = null;
+      } else {
+        this.surface.leave();
+      }
+    }
+    if (this.surface?.faded) {
       this.surface.dispose(ctx.renderer);
       this.surface = null;
     }
@@ -331,8 +340,8 @@ export class RockyPlanet extends BaseBody {
         },
       });
     }
-    // Con la superficie completa, el globo sobra (sus puntos son de decenas de km).
-    if (this.globe) this.globe.object.visible = !this.surface?.complete;
+    // Con la superficie ya fundida del todo, el globo sobra (sus puntos son de decenas de km).
+    if (this.globe) this.globe.object.visible = !this.surface?.opaque;
   }
 
   /**

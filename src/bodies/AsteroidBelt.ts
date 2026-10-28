@@ -8,7 +8,8 @@
  * `ScaleSystem.distanceNode`, como cualquier otro cuerpo hijo del Sol.
  */
 import * as THREE from 'three/webgpu';
-import { Fn, Loop, atan, cos, float, instanceIndex, instancedArray, sin, sqrt, uniform, vec3, vec4 } from 'three/tsl';
+import { Fn, Loop, atan, cos, float, instanceIndex, instancedArray, modelWorldMatrix, sin, sqrt, uniform, vec3, vec4 } from 'three/tsl';
+import { horizonMask } from '../core/Horizon';
 import { BODIES } from '../astro/bodies';
 import { AU_KM, DEG } from '../astro/units';
 import { pixelAngle, softDisc } from '../particles/nodes';
@@ -99,7 +100,8 @@ export class AsteroidBelt {
     material.positionNode = center;
     material.scaleNode = pixelAngle.mul(options.sizePx);
     const c = new THREE.Color(options.color);
-    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(orbitB.toAttribute().w).mul(beltLook.brightness).mul(this.inside), 1);
+    const world = modelWorldMatrix.mul(vec4(center, 1)).xyz;
+    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(orbitB.toAttribute().w).mul(beltLook.brightness).mul(this.inside).mul(horizonMask(world)), 1);
     material.opacityNode = softDisc();
     this.object = this.field.object;
   }

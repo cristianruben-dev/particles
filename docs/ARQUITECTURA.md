@@ -192,7 +192,9 @@ Al pasar el cursor por encima, las partículas cercanas se desordenan y luego vu
 
 ## 7. Superficie y aterrizaje (`surface/`)
 
-Se baja de forma continua desde la órbita hasta ~10 m del suelo en todos los cuerpos rocosos (salvo Venus, que solo enseña nubes). Verificado con descensos automáticos de 2000 km a 10 m sobre el Himalaya, Tycho y Valles Marineris (900 frames cada uno): ninguna posición no finita, la cámara nunca por debajo de 11 m del suelo dibujado, el plano cercano siempre por delante del suelo y sin huecos de cobertura entre el globo y la superficie.
+Se baja de forma continua desde la órbita hasta ~10 m del suelo en todos los cuerpos rocosos (salvo Venus, que solo enseña nubes). Verificado con descensos automáticos (900 frames de 2000 km a 10 m) sobre el Himalaya, Tycho y Valles Marineris, y de 1500 km a 10 m en Mercurio, Europa y Titán (los dos últimos sin mapa de alturas), con el tiempo parado y en marcha: ninguna posición no finita, la cámara nunca por debajo de 11 m del suelo dibujado y el plano cercano siempre por delante.
+
+**Huecos** (hojas visibles que acaban el frame sin chunk; se ve el fondo): 0 en reposo con ventanas de 1024×768 a 1920×1080. Al girar 180° de golpe a 10 m, hasta 15 durante 3 frames; en un descenso rápido (100 km → 10 m en 150 frames), hasta 20 durante 9 frames, recuperados en 11.
 
 ### 7.1 Cubo-esfera + quadtree (`cubeSphere.ts`, `CubeSphereQuadtree.ts`)
 
@@ -221,17 +223,19 @@ Se baja de forma continua desde la órbita hasta ~10 m del suelo en todos los cu
 
 ### 7.3 Chunks (`Surface.ts`, `SurfaceChunk.ts`, `ChunkPool.ts`)
 
-- **Pool**: buffers para 448 chunks de 80×80 partículas (2,9M, ~140 MB) con posición relativa al centro, color y normal del terreno. Se reservan al activar la superficie y se liberan al salir (verificado: 321 → 183 MB al subir).
+- **Pool**: buffers para 576 chunks de 80×80 partículas (3,7M, ~180 MB) con posición relativa al centro, color y normal del terreno. A 10 m del suelo hacen falta ~300 con una ventana de 1024×768, ~450 con 1440×900 y ~490 con 1920×1080. Con el pool por encima del 80 %, los umbrales de división suben y el detalle se degrada en vez de atascarse. Se reserva al activar la superficie y se libera al salir (verificado: 321 → 183 MB al subir).
+- **Prioridad**: primero las hojas visibles sin chunk (huecos), después las divisiones, de las partículas más separadas a las menos; hasta 32 chunks por frame.
 - **Generación en GPU**: una pasada compute por frame para hasta 32 chunks, con los datos de cada uno en un buffer de trabajos. Normal del terreno por diferencias finitas, color del albedo real oscurecido en las pendientes, luces nocturnas y agua.
 - **Colocación**: cada chunk es un `Sprite` hijo del grupo que gira con el cuerpo, en su centro (float64); todos comparten un material con uniforms por objeto (`onObjectUpdate`: hueco del pool, separación, aparición).
 - **Reparto de las partículas: ruido azul progresivo** (tesela de 6400 puntos con el algoritmo del mejor candidato de Mitchell, desplazada por chunk). Se probaron una rejilla con jitter y la secuencia R2 (guardan filas que, con el suelo de canto, se ven como rayas) y el azar puro (grumos, ruido de televisión).
 - **Densidad continua por partícula**: en el shader, cada partícula calcula a su distancia cuántas hacen falta para ~2,6 px de separación; como el orden es progresivo, su índice sirve de umbral y los puntos crecen cuando se dibujan menos. Sin saltos de densidad entre chunks ni entre niveles.
 - Al dividir, el padre sigue dibujándose y se funde (0,35 s) mientras aparecen los hijos.
-- **Relevo globo ↔ superficie**: la superficie se crea cuando el globo ya no da 2,6 px (fracción de detalle 0,8; sale por debajo de 0,55) y el globo se oculta cuando el quadtree visible está completo. Nubes y atmósfera se desvanecen al bajar por debajo de ellas; la luz pasa de la normal de la esfera a la del terreno entre 0,08 y 0,01 radios de altitud.
+- **Relevo globo ↔ superficie**: la superficie se crea cuando el globo ya no da 2,6 px (fracción de detalle 0,8; sale por debajo de 0,55). Al completarse, los chunks aparecen fundiéndose (0,35 s) con el globo aún visible, que se oculta después; al subir, el globo vuelve y los chunks se desvanecen antes de liberarse. Nubes y atmósfera se desvanecen al bajar por debajo de ellas; la luz pasa de la normal de la esfera a la del terreno entre 0,08 y 0,01 radios de altitud.
+- Cada mapa tiene su altura de referencia: el de 8 bits del globo lunar tiene el radio medio en 0,453 y el LOLA de 16 bits en 0,5 (medido); con la misma referencia, el suelo saltaba ~1,5 km en el relevo.
 
 ### 7.4 Horizonte (`core/Horizon.ts`)
 
-Entre las partículas del terreno hay aire (el estilo del proyecto): por los huecos se veía el cielo azul (el suelo parecía lavado y cada nivel de detalle se veía de un tono) o las estrellas (en la Luna). El fondo de la escena es ahora un degradado: cielo con el color de la atmósfera de día por encima del horizonte (que baja con la altitud) y, por debajo, un tono oscuro del albedo del suelo bajo la cámara. Las estrellas solo se dibujan por encima del horizonte y se apagan de día.
+Entre las partículas del terreno hay aire (el estilo del proyecto): por los huecos se veía el cielo azul (el suelo parecía lavado y cada nivel de detalle se veía de un tono) o las estrellas (en la Luna). El fondo de la escena es ahora un degradado: cielo con el color de la atmósfera de día por encima del horizonte (que baja con la altitud) y, por debajo, un tono oscuro del albedo del suelo bajo la cámara. Las estrellas, los puntos lejanos de los cuerpos, las órbitas, los asteroides y los nombres solo se ven por encima del horizonte (`horizonMask`); las estrellas, además, se apagan de día.
 
 ### 7.5 Pendiente
 

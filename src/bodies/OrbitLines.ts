@@ -7,7 +7,8 @@
  * shader con `ScaleSystem.distanceNode`: siguen la transición entre escalas sin recalcular.
  */
 import * as THREE from 'three/webgpu';
-import { float, fract, instanceIndex, length, smoothstep, uniform, vec3, vec4 } from 'three/tsl';
+import { float, fract, instanceIndex, length, modelWorldMatrix, smoothstep, uniform, vec3, vec4 } from 'three/tsl';
+import { horizonMask } from '../core/Horizon';
 import { positionRelativeToParent } from '../astro/ephemeris';
 import { eclToScene, length3d } from '../astro/frames';
 import { projectedRadiusPx } from '../particles/LodManager';
@@ -76,7 +77,8 @@ class Orbit {
     // Se apaga cerca del cuerpo para no cruzar su disco.
     const near = smoothstep(this.bodyRadius.mul(1.3), this.bodyRadius.mul(3), length(local.sub(this.bodyLocal)));
     const c = new THREE.Color(body.data.color).lerp(new THREE.Color(0xffffff), 0.35);
-    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(trail).mul(near).mul(this.fade).mul(orbitLook.brightness).mul(0.5), 1);
+    const world = modelWorldMatrix.mul(vec4(local, 1)).xyz;
+    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(trail).mul(near).mul(this.fade).mul(orbitLook.brightness).mul(horizonMask(world)).mul(0.5), 1);
     material.opacityNode = softDisc();
   }
 

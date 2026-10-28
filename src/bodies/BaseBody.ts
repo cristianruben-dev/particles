@@ -4,7 +4,8 @@
  * Ver docs/ARQUITECTURA.md §5, §6.3 y §8.
  */
 import * as THREE from 'three/webgpu';
-import { cameraPosition, float, modelWorldMatrixInverse, uniform, vec3, vec4 } from 'three/tsl';
+import { cameraPosition, float, modelWorldMatrix, modelWorldMatrixInverse, uniform, vec3, vec4 } from 'three/tsl';
+import { horizonMask } from '../core/Horizon';
 import type { BodyData } from '../astro/bodies';
 import { spinAngle } from '../astro/ephemeris';
 import { eclToScene, vec3d, type Vec3d } from '../astro/frames';
@@ -258,7 +259,8 @@ export abstract class BaseBody implements CelestialBody {
     material.scaleNode = pixelAngle.mul(MARKER_PX).div(this.objectScale);
     const c = new THREE.Color(this.data.color);
     const gain = this.data.kind === 'star' ? 8 : 1.6;
-    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(gain).mul(this.markerAlpha), 1);
+    const world = modelWorldMatrix.mul(vec4(toCamera.mul(1.05), 1)).xyz;
+    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(gain).mul(this.markerAlpha).mul(horizonMask(world)), 1);
     material.opacityNode = softDisc();
     const marker = new THREE.Sprite(material);
     marker.frustumCulled = false;

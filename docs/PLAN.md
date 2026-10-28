@@ -93,7 +93,8 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 8. [x] Extra: horizonte con cielo y suelo en el fondo, y estrellas solo por encima del horizonte (§7.4).
 
 **Hecho cuando:**
-- [x] Se baja de forma continua desde la órbita hasta unos 10 m del suelo de la Tierra, la Luna y Marte, sin cortes ni parpadeo. Verificado con descensos automáticos de 2000 km a 10 m (900 frames) sobre el Himalaya, Tycho y Valles Marineris: sin posiciones no finitas, la cámara nunca por debajo de 11 m del suelo dibujado, plano cercano siempre delante del suelo y sin huecos entre el globo y la superficie. Al subir, la superficie se libera (321 → 183 MB) y al volver a bajar se rehace.
+- [x] Se baja de forma continua desde la órbita hasta unos 10 m del suelo de la Tierra, la Luna y Marte (y Mercurio, Europa y Titán), sin cortes: descensos automáticos de 2000 km a 10 m, con el tiempo parado y en marcha, sin posiciones no finitas, con la cámara siempre a más de 11 m del suelo dibujado y el plano cercano delante. El relevo globo ↔ superficie se hace con un fundido de 0,35 s en los dos sentidos. Al subir, la superficie se libera (321 → 183 MB) y al volver a bajar se rehace.
+- [~] Sin parpadeo: en reposo no hay huecos (0 hojas visibles sin chunk, de 1024×768 a 1920×1080). Al girar 180° de golpe a 10 m aparecen hasta 15 huecos durante 3 frames, y en una bajada muy rápida hasta 20 durante 9 frames.
 - [~] Se reconocen accidentes reales: el pico central y la sombra de Tycho, los cañones de Valles Marineris y la masa nevada del Himalaya. La Tierra, con un mapa de 10 km por texel, no tiene picos individuales: por debajo es ruido procedural.
 - [ ] 60 fps con unos 4–6M de partículas: pendiente de medir con la ventana delante. En el panel oculto del navegador se vieron 60–70 fps a 10 m del suelo con ~3M de partículas.
 

@@ -35,6 +35,8 @@ export class Labels {
   }
 
   update(camera: THREE.PerspectiveCamera, width: number, height: number, focus: CelestialBody): void {
+    // A ras de suelo, nada de nombres bajo el horizonte (se verían sobre el terreno).
+    const sky = focus.sky;
     // Discos en pantalla de los cuerpos grandes: tapan las etiquetas de lo que hay detrás.
     const discs: { x: number; y: number; r: number; distance: number }[] = [];
     for (const body of this.ordered) {
@@ -63,6 +65,7 @@ export class Labels {
         if (show && placed.some((p) => Math.abs(p.x - x) < MIN_GAP_PX * 3 && Math.abs(p.y - y) < MIN_GAP_PX)) show = false;
         const distance = body.object3d.position.length();
         if (show && discs.some((d) => d.distance < distance && Math.hypot(d.x - x, d.y - y) < d.r)) show = false;
+        if (show && sky.amount > 0.001 && body.object3d.position.dot(sky.up) / distance < sky.dip) show = false;
       }
       if (show) {
         placed.push({ x, y });

@@ -69,8 +69,11 @@ import {
 /** Partículas por lado de un chunk. */
 const N = 80;
 const NN = N * N;
-/** Huecos del pool (≈ 2,9M partículas, ~140 MB): a 10 m del suelo hacen falta unos 400. */
-const CAPACITY = 448;
+/**
+ * Huecos del pool (≈ 3,7M partículas, ~180 MB). A 10 m del suelo hacen falta ~300 con una
+ * ventana de 1024×768 y ~450 con 1440×900; si se llena, el detalle se degrada (§7.3).
+ */
+const CAPACITY = 576;
 /** Chunks que se pueden generar por frame. */
 const JOBS = 32;
 /** vec4 por trabajo en el buffer de trabajos. */
@@ -130,8 +133,12 @@ export interface SurfaceView {
 export class Surface {
   /** Cuelga del grupo que gira con el cuerpo. */
   readonly group = new THREE.Group();
-  /** true cuando el quadtree visible está completo (ya puede sustituir al globo). */
+  /** true cuando el quadtree visible se ha completado por primera vez (ya puede sustituir al globo). */
   complete = false;
+  /** Hojas visibles sin chunk en el último frame (huecos por presupuesto o pool lleno). */
+  holes = 0;
+  private reveal = 0;
+  private leaving = false;
 
   private readonly tree = new CubeSphereQuadtree();
   private readonly pool = new ChunkPool(CAPACITY, NN);
@@ -213,17 +220,23 @@ export class Surface {
       return ((Math.PI / 2) * 2 ** -n.depth) / N / (d * pixelAngle.value);
     };
 
-    // 1. Decidir divisiones y fusiones (de lo más cercano a lo más lejano), con presupuesto.
+    // Con el pool casi lleno, el detalle se degrada (umbrales más altos) en vez de atascarse.
+    const fill = 1 - this.pool.available / CAPACITY;
+    const strain = 1 + 2 * Math.max(0, (fill - 0.8) / 0.2);
+    const splitPx = SPLIT_PX * strain, mergePx = MERGE_PX * strain;
+
+    // 1. Recorrido: fusiones (en el acto) y candidatas a dividirse (después).
     let budget = JOBS;
     let pending = false;
     const stack = [...this.tree.roots];
     const leaves: QuadNode[] = [];
+    const splits: { node: QuadNode; px: number }[] = [];
     while (stack.length) {
       const n = stack.pop()!;
-      const vis = visible(n);
+      const vis = !this.leaving && visible(n);
       const px = vis ? spacingPx(n) : 0;
       if (n.children) {
-        if (!vis || px < MERGE_PX) {
+        if (!vis || px < mergePx) {
           // Fusionar: el padre necesita su chunk antes de soltar a los hijos.
           if (vis && !n.chunk) {
             if (budget < 1 || !this.pool.available) { pending = true; stack.push(...n.children); continue; }
@@ -241,29 +254,33 @@ export class Surface {
         this.retire(n, true);
         continue;
       }
-      if (px > SPLIT_PX && n.depth < config.surfaceMaxDepth) {
-        if (budget >= 4 && this.pool.available >= 4) {
-          for (const child of this.tree.split(n)) this.spawn(child);
-          budget -= 4;
-          this.retire(n, false);
-          stack.push(...n.children!);
-          continue;
-        }
-        pending = true;
-      }
       leaves.push(n);
+      if (px > splitPx && n.depth < config.surfaceMaxDepth) splits.push({ node: n, px });
     }
-    // 2. Hojas visibles sin chunk (la cámara ha girado): las más cercanas primero.
+
+    // 2. Primero, las hojas visibles sin chunk (la cámara ha girado): son huecos.
     const missing = leaves.filter((n) => !n.chunk);
     missing.sort((a, b) => spacingPx(b) - spacingPx(a));
     for (const n of missing) {
-      if (budget < 1 || !this.pool.available) { pending = true; break; }
+      if (budget < 1 || !this.pool.available) break;
       this.spawn(n);
       budget--;
     }
-    this.complete = this.complete || !pending;
+    /** Hojas visibles que acaban el frame sin chunk: se ve el fondo. */
+    this.holes = leaves.reduce((k, n) => k + (n.chunk ? 0 : 1), 0);
 
-    // 3. Generar los chunks nuevos en una pasada. Fuera los que se crearon y se soltaron en
+    // 3. Después, las divisiones (las de partículas más separadas primero). El padre sigue
+    // dibujándose y se funde mientras aparecen los hijos.
+    splits.sort((a, b) => b.px - a.px);
+    for (const { node } of splits) {
+      if (budget < 4 || this.pool.available < 4) { pending = true; break; }
+      for (const child of this.tree.split(node)) this.spawn(child);
+      budget -= 4;
+      this.retire(node, false);
+    }
+    if (!this.complete && !pending && this.holes === 0) this.complete = true;
+
+    // 4. Generar los chunks nuevos en una pasada. Fuera los que se crearon y se soltaron en
     // este mismo frame: su hueco puede tenerlo ya otro chunk.
     this.pendingJobs = this.pendingJobs.filter(({ chunk }) => this.chunks.has(chunk));
     if (this.pendingJobs.length) {
@@ -274,14 +291,15 @@ export class Surface {
       this.pendingJobs = [];
     }
 
-    // 4. Fundidos y densidad: cada chunk dibuja el prefijo que deja ~2,6 px entre partículas,
-    // con puntos más grandes cuando dibuja menos.
-    const step = this.complete ? view.dt / FADE_SECONDS : 1;
+    // 5. Fundidos y densidad. Mientras se construye por primera vez no se ve nada (sigue el
+    // globo); al completarse, todo aparece fundiéndose; al irse, todo se desvanece.
+    const step = view.dt / FADE_SECONDS;
+    if (this.complete && !this.leaving) this.reveal = Math.min(1, this.reveal + step);
     for (const c of [...this.chunks]) {
-      if (c.retiring) {
+      if (c.retiring || this.leaving) {
         c.setAppear(c.appear - step);
         if (c.appear <= 0) { this.free(c); continue; }
-      } else if (c.appear < 1) {
+      } else if (this.complete && c.appear < 1) {
         c.setAppear(Math.min(1, c.appear + step));
       }
       // Cota de las que hacen falta en el punto más cercano del chunk (el shader afina).
@@ -289,6 +307,20 @@ export class Surface {
       c.setDensity(fraction);
     }
     this.group.visible = this.complete;
+  }
+
+  /** Empieza a desvanecerse (se sube por encima del relevo); `faded` dice cuándo se puede soltar. */
+  leave(): void {
+    this.leaving = true;
+  }
+
+  get faded(): boolean {
+    return this.leaving && this.chunks.size === 0;
+  }
+
+  /** La superficie tapa ya del todo al globo (completa y sin fundido pendiente). */
+  get opaque(): boolean {
+    return this.complete && !this.leaving && this.reveal >= 1;
   }
 
   private spawn(node: QuadNode): void {
@@ -310,7 +342,7 @@ export class Surface {
     const chunk = node.chunk;
     if (!chunk) return;
     node.chunk = null;
-    if (immediately || !this.complete) this.free(chunk);
+    if (immediately || !this.complete || chunk.appear <= 0) this.free(chunk);
     else chunk.retiring = true;
   }
 
