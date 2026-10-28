@@ -24,6 +24,24 @@ Qué hace falta, de dónde sacarlo y con qué **licencia**. Antes de añadir un 
 | Marte | USGS — MOLA MEGDR | Dominio público |
 | Mercurio | USGS — MESSENGER DEM | Dominio público |
 
+## Tipografías e iconos de la interfaz
+
+Se instalan con npm (Fontsource) y Vite las empaqueta: no van en `public/`.
+
+| Recurso | Fuente | Licencia |
+|---|---|---|
+| Geist y Geist Mono (texto y cifras) | Vercel, vía `@fontsource-variable/geist` y `@fontsource-variable/geist-mono` | SIL Open Font License 1.1 |
+| Instrument Serif (nombres de los cuerpos) | Instrument, vía `@fontsource/instrument-serif` | SIL Open Font License 1.1 |
+| Iconos (`src/ui/icons.ts`) | Dibujados para este proyecto | Los del proyecto |
+
+## Datos de la ficha de cada cuerpo
+
+| Dato | Fuente | Licencia |
+|---|---|---|
+| Masa, temperatura media, presión y lunas de planetas, Luna y Plutón | NASA NSSDCA — Planetary Fact Sheet (Metric), consultada el 27/10/2026 | Dominio público (NASA) |
+| GM de las lunas | JPL SSD — Planetary Satellite Physical Parameters | Dominio público (NASA/JPL) |
+| Temperatura y presión de Titán | Huygens (ESA/NASA, 2005) | Dato científico publicado |
+
 ## Catálogos
 
 | Dato | Fuente | Licencia |

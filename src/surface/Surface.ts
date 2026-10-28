@@ -43,6 +43,7 @@ import { rockyLook } from '../bodies/RockyPlanet';
 import { ball, ballDepth, ballSprite, hardDisc, pixelAngle, type FloatNode, type Vec3Node } from '../particles/nodes';
 import { config } from '../config';
 import { freeStorageBuffers } from '../particles/gpu';
+import { particleLook } from '../particles/LodManager';
 import type { ParticleBuffer } from '../particles/ParticleField';
 import { blueNoiseTile } from '../particles/progressive';
 import { ChunkPool } from './ChunkPool';
@@ -70,23 +71,27 @@ import {
 const N = 80;
 const NN = N * N;
 /**
- * Huecos del pool (≈ 3,7M partículas, ~180 MB). A 10 m del suelo hacen falta ~300 con una
- * ventana de 1024×768 y ~450 con 1440×900; si se llena, el detalle se degrada (§7.3).
+ * Huecos del pool; lo fija el perfil de calidad (§12) y se lee al crear cada superficie.
+ * Con 576 (≈ 3,7M partículas, ~180 MB) y 2,6 px de separación, a 10 m del suelo hacen falta
+ * ~300 con una ventana de 1024×768 y ~450 con 1440×900; si se llena, el detalle se degrada (§7.3).
  */
-const CAPACITY = 576;
+export const surfaceBudget = { chunks: 576 };
 /** Chunks que se pueden generar por frame. */
 const JOBS = 32;
 /** vec4 por trabajo en el buffer de trabajos. */
 const JOB_STRIDE = 21;
-/** Dividir si la separación de partícula pasa de esto (px CSS); fusionar por debajo de MERGE_PX. */
-const SPLIT_PX = 4;
-const MERGE_PX = 3.1;
+/**
+ * Dividir si la separación de partícula pasa de esto; fusionar por debajo de MERGE. En
+ * unidades de la separación deseada (`particleLook.spacingPx`, 2,6 px CSS en calidad alta).
+ */
+const SPLIT = 4 / 2.6;
+const MERGE = 3.1 / 2.6;
 /** Profundidad desde la que todo se evalúa respecto al centro del chunk. */
 const PRECISE_DEPTH = 10;
 /** Segundos de fundido entre un chunk y sus hijos. */
 const FADE_SECONDS = 0.35;
-/** Separación de partícula deseada en pantalla (px CSS), como el LOD del globo. */
-const TARGET_PX = 2.6;
+/** Separación de partícula deseada en pantalla (px CSS), la del LOD del globo. */
+const targetPx = uniform(particleLook.spacingPx);
 /** Octava 2D más fina posible (profundidad máxima + log2 N). */
 const MAX_OCTAVE = config.surfaceMaxDepth + Math.floor(Math.log2(N));
 
@@ -141,10 +146,13 @@ export class Surface {
   private leaving = false;
 
   private readonly tree = new CubeSphereQuadtree();
-  private readonly pool = new ChunkPool(CAPACITY, NN);
+  private readonly capacity = surfaceBudget.chunks;
+  private readonly pool = new ChunkPool(this.capacity, NN);
   private readonly chunks = new Set<SurfaceChunk>();
   private readonly coarse: number[];
   private readonly maxRelief: number;
+  /** Radio del suelo más bajo posible (radios): fondo de cañones y cuencas, como Hellas. */
+  private readonly floor: number;
 
   private readonly jobData: Float32Array;
   private readonly jobs: THREE.StorageInstancedBufferAttribute;
@@ -164,6 +172,7 @@ export class Surface {
     // Altura máxima posible (radios): margen del horizonte y de los límites de los nodos.
     const noiseMax = this.coarse.reduce((a, km) => a + km, 0) / params.radiusKm * params.roughness * 2;
     this.maxRelief = params.relief * (1 - params.reference) + noiseMax;
+    this.floor = 1 - params.relief * params.reference - noiseMax;
 
     this.jobData = new Float32Array(JOBS * JOB_STRIDE * 4);
     this.jobs = new THREE.StorageInstancedBufferAttribute(this.jobData, 4);
@@ -191,7 +200,10 @@ export class Surface {
     const cam = view.cameraLocal;
     const camDist = cam.length();
     const camDir = cam.clone().divideScalar(camDist);
-    const camHorizon = Math.acos(Math.min(1, 1 / Math.max(camDist, 1)));
+    // Horizonte sobre la esfera del suelo más bajo: dentro de Valles Marineris la cámara puede
+    // estar por debajo del radio medio y el horizonte del radio medio sería cero.
+    const floor = this.floor;
+    const camHorizon = Math.acos(Math.min(1, floor / Math.max(camDist, floor)));
     const center = new THREE.Vector3();
 
     const heightAt = (d: readonly number[]) =>
@@ -210,7 +222,7 @@ export class Surface {
     const visible = (n: QuadNode) => {
       const radius = bounds(n);
       // Horizonte: el de la esfera más lo que asoma lo más alto del nodo por detrás.
-      const reach = camHorizon + Math.acos(1 / (1 + Math.max(n.maxHeight!, 0))) + n.halfAngle;
+      const reach = camHorizon + Math.acos(Math.min(1, floor / (1 + Math.max(n.maxHeight!, floor - 1)))) + n.halfAngle;
       if (center.angleTo(camDir) > reach) return false;
       return view.inFrustum(center, radius);
     };
@@ -221,9 +233,11 @@ export class Surface {
     };
 
     // Con el pool casi lleno, el detalle se degrada (umbrales más altos) en vez de atascarse.
-    const fill = 1 - this.pool.available / CAPACITY;
+    const fill = 1 - this.pool.available / this.capacity;
     const strain = 1 + 2 * Math.max(0, (fill - 0.8) / 0.2);
-    const splitPx = SPLIT_PX * strain, mergePx = MERGE_PX * strain;
+    const target = particleLook.spacingPx;
+    targetPx.value = target;
+    const splitPx = SPLIT * target * strain, mergePx = MERGE * target * strain;
 
     // 1. Recorrido: fusiones (en el acto) y candidatas a dividirse (después).
     let budget = JOBS;
@@ -303,7 +317,7 @@ export class Surface {
         c.setAppear(Math.min(1, c.appear + step));
       }
       // Cota de las que hacen falta en el punto más cercano del chunk (el shader afina).
-      const fraction = Math.min(1, Math.max(0.03, (spacingPx(c.node) * 1.6 / TARGET_PX) ** 2));
+      const fraction = Math.min(1, Math.max(0.03, (spacingPx(c.node) * 1.6 / target) ** 2));
       c.setDensity(fraction);
     }
     this.group.visible = this.complete;
@@ -546,7 +560,7 @@ export class Surface {
     // se dibujan las primeras y, con menos, los puntos crecen. Sin saltos entre chunks ni niveles.
     const depth = modelViewMatrix.mul(vec4(center, 1)).z.negate();
     const spacingPx = spacing.mul(look.objectScale).div(depth.mul(pixelAngle));
-    const fraction = spacingPx.div(TARGET_PX).pow(2).clamp(0.03, 1);
+    const fraction = spacingPx.div(targetPx).pow(2).clamp(0.03, 1);
     const rank = float(instanceIndex).add(0.5).div(NN);
     const keep = step(rank, fraction);
 

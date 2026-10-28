@@ -109,6 +109,22 @@ export class ScaleSystem {
   }
 
   /**
+   * Inversa de `localDistance`: unidades de escena → km desde el centro del padre (vuelo
+   * libre y adopción de la cámara). Bisección en log-distancia: la función es monótona
+   * también durante la transición entre escalas.
+   */
+  inverseLocalDistance(parent: ScaleParent, sceneDistance: number): number {
+    if (sceneDistance <= 0) return 0;
+    let lo = Math.log(parent.radiusKm * 1e-12), hi = Math.log(1e13);
+    for (let i = 0; i < 64; i++) {
+      const mid = (lo + hi) / 2;
+      if (this.localDistance(parent, Math.exp(mid)) < sceneDistance) lo = mid;
+      else hi = mid;
+    }
+    return Math.exp((lo + hi) / 2);
+  }
+
+  /**
    * `localDistance` en TSL, para partículas que se colocan en la GPU (anillos, asteroides,
    * órbitas). `distanceKm` en km; devuelve unidades de escena.
    */

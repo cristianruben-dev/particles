@@ -31,6 +31,10 @@ const BODY_FRAME_EXIT = 0.15;
 const TILT_START = 0.05;
 const TILT_END = 3e-6;
 const MAX_TILT = 1.45;
+/** Aterrizaje con el botón: altitud final (en radios), mirada inclinada hacia el horizonte y duración. */
+const LAND_ALTITUDE_RADII = 1.5e-3;
+const LAND_PITCH = 0.85;
+const landSeconds = (ratio: number) => Math.min(9, Math.max(4.5, 2.5 + 0.55 * Math.log(Math.max(ratio, 1))));
 
 type Frame = 'scene' | 'body';
 
@@ -67,10 +71,27 @@ export class OrbitMode implements NavigationMode {
     arc: number;
   } | null = null;
 
+  /**
+   * Bajada o subida animada (botones de aterrizar y despegar). Al aterrizar, la cámara va en
+   * el marco del cuerpo desde el principio: el lugar elegido no se desliza al girar el cuerpo.
+   */
+  private descent: {
+    t: number;
+    duration: number;
+    fromAltitude: number;
+    toAltitude: number;
+    /** Direcciones en el marco del cuerpo; null = mantener la actual (despegue). */
+    fromDir: Dir | null;
+    toDir: Dir | null;
+    fromPitch: number;
+    toPitch: number;
+  } | null = null;
+
   private dragging: 0 | 1 | 2 = 0;
   private dragDistance = 0;
   private lastPointer = { x: 0, y: 0 };
-  private readonly abort = new AbortController();
+  /** Uno nuevo en cada `enter`: `exit` lo aborta y quita los listeners. */
+  private abort = new AbortController();
   private readonly q = new THREE.Quaternion();
 
   constructor(
@@ -92,6 +113,81 @@ export class OrbitMode implements NavigationMode {
     return this.transition !== null;
   }
 
+  /** Viaje en curso: de dónde, adónde y progreso (0–1, con la curva del movimiento). */
+  get travel(): { from: CelestialBody; to: CelestialBody; progress: number } | null {
+    const tr = this.transition;
+    return tr ? { from: tr.from, to: this.focus, progress: easeInOut(tr.t) } : null;
+  }
+
+  /** true mientras baja o sube con los botones. */
+  get descending(): boolean {
+    return this.descent !== null;
+  }
+
+  /**
+   * Baja hasta el suelo con una mirada inclinada hacia el horizonte. Con lugar (latitud y
+   * longitud planetocéntricas, este positivo), la cámara se desplaza hasta encima de él.
+   */
+  land(site?: { lat: number; lon: number }): void {
+    const body = this.focus;
+    if (!body.landable || this.transition) return;
+    this.setFrame('body');
+    const toAltitude = body.data.radiusKm * LAND_ALTITUDE_RADII;
+    const fromDir = fromAngles(this.azimuth, this.elevation);
+    // Marco del cuerpo: y = polo, lon = atan2(−z, x) (la de las texturas) → azimut = −lon.
+    const toDir = site ? fromAngles(-site.lon * DEG, site.lat * DEG) : fromDir;
+    this.descent = {
+      t: 0,
+      duration: landSeconds(this.altitude / toAltitude),
+      fromAltitude: this.altitude,
+      toAltitude,
+      fromDir,
+      toDir,
+      fromPitch: this.pitch,
+      toPitch: LAND_PITCH,
+    };
+    this.heading = this.targetHeading = 0;
+  }
+
+  /** Vuelve a la altitud de llegada sobre el mismo punto. */
+  ascend(): void {
+    if (this.transition) return;
+    const toAltitude = this.focus.data.radiusKm * (DEFAULT_DISTANCE_RADII - 1);
+    this.descent = {
+      t: 0,
+      duration: landSeconds(toAltitude / this.altitude),
+      fromAltitude: this.altitude,
+      toAltitude,
+      fromDir: null,
+      toDir: null,
+      fromPitch: this.pitch,
+      toPitch: 0,
+    };
+  }
+
+  /**
+   * Toma la cámara donde esté (al salir del vuelo libre): mismo cuerpo, misma dirección y
+   * altitud. Lo que cambia es la mirada, que pasa a apuntar al cuerpo (lo suaviza el rig).
+   */
+  adopt(rig: CameraRig, body: CelestialBody): void {
+    this.transition = null;
+    this.descent = null;
+    this.focus = body;
+    this.setFrame('scene');
+    const p = rig.position, c = body.sceneD;
+    const dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
+    const d = Math.hypot(dx, dy, dz) || 1;
+    const dir = { x: dx / d, y: dy / d, z: dz / d };
+    [this.azimuth, this.elevation] = toAngles(dir);
+    this.elevation = Math.max(-1.5, Math.min(1.5, this.elevation));
+    this.targetAzimuth = this.azimuth;
+    this.targetElevation = this.elevation;
+    const km = rig.scale.inverseLocalDistance(body.data, d);
+    this.altitude = this.targetAltitude = Math.max(this.minAltitude, km - body.data.radiusKm - body.groundHeightKm(dir));
+    this.heading = this.targetHeading = this.pitch = this.targetPitch = 0;
+    if (body.landable && this.altitude < body.data.radiusKm * BODY_FRAME_ENTER) this.setFrame('body');
+  }
+
   private get minAltitude(): number {
     return this.focus.landable ? MIN_GROUND_KM : this.focus.data.radiusKm * MIN_ALTITUDE_RADII;
   }
@@ -107,6 +203,7 @@ export class OrbitMode implements NavigationMode {
 
   focusOn(body: CelestialBody, rig: CameraRig): void {
     if (body === this.focus && !this.transition) return;
+    this.descent = null;
     this.setFrame('scene');
     const p = rig.position;
     const dx = p.x - body.sceneD.x, dy = p.y - body.sceneD.y, dz = p.z - body.sceneD.z;
@@ -140,6 +237,7 @@ export class OrbitMode implements NavigationMode {
   }
 
   enter(_rig: CameraRig): void {
+    this.abort = new AbortController();
     const opts = { signal: this.abort.signal };
     const el = this.element;
     el.addEventListener('contextmenu', (e) => e.preventDefault(), opts);
@@ -155,9 +253,10 @@ export class OrbitMode implements NavigationMode {
       const dx = e.clientX - this.lastPointer.x, dy = e.clientY - this.lastPointer.y;
       this.lastPointer = { x: e.clientX, y: e.clientY };
       this.dragDistance += Math.abs(dx) + Math.abs(dy);
+      if (this.dragDistance > 4) this.descent = null;
       if (this.dragging === 2) {
         this.targetHeading -= dx * 0.004;
-        this.targetPitch = Math.max(-1.2, Math.min(0.6, this.targetPitch - dy * 0.004));
+        this.targetPitch = Math.max(-1.2, Math.min(1, this.targetPitch - dy * 0.004));
         return;
       }
       // Más lento cuanto más cerca del suelo: a 10 m, unos centímetros por píxel.
@@ -175,6 +274,7 @@ export class OrbitMode implements NavigationMode {
     }, opts);
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
+      this.descent = null;
       const next = this.targetAltitude * Math.exp(e.deltaY * 0.0015);
       this.targetAltitude = Math.min(MAX_DISTANCE_KM, Math.max(this.minAltitude, next));
     }, { ...opts, passive: false });
@@ -183,8 +283,24 @@ export class OrbitMode implements NavigationMode {
   update(rig: CameraRig, dt: number): void {
     const body = this.focus;
     const r = body.data.radiusKm;
-    // Marco: el del cuerpo a ras de suelo, el de la escena en órbita.
-    if (!this.transition && body.landable) {
+    // Bajada o subida con los botones: altitud en escala logarítmica, dirección y mirada
+    // en la primera mitad (arriba, donde moverse de lado no marea).
+    const ds = this.descent;
+    if (ds) {
+      ds.t = Math.min(1, ds.t + dt / ds.duration);
+      const e = easeInOut(ds.t);
+      this.altitude = this.targetAltitude = Math.exp(Math.log(ds.fromAltitude) * (1 - e) + Math.log(ds.toAltitude) * e);
+      if (ds.fromDir && ds.toDir) {
+        [this.azimuth, this.elevation] = toAngles(slerp(ds.fromDir, ds.toDir, easeInOut(Math.min(1, ds.t / 0.6))));
+        this.targetAzimuth = this.azimuth;
+        this.targetElevation = this.elevation;
+      }
+      this.pitch = this.targetPitch = ds.fromPitch + (ds.toPitch - ds.fromPitch) * easeInOut(Math.max(0, (ds.t - 0.3) / 0.7));
+      if (ds.t >= 1) this.descent = null;
+    }
+
+    // Marco: el del cuerpo a ras de suelo, el de la escena en órbita (al aterrizar, siempre el del cuerpo).
+    if (!this.transition && body.landable && !(ds?.toDir)) {
       if (this.frame === 'scene' && this.altitude < r * BODY_FRAME_ENTER) this.setFrame('body');
       else if (this.frame === 'body' && this.altitude > r * BODY_FRAME_EXIT) this.setFrame('scene');
     }
@@ -293,6 +409,7 @@ export class OrbitMode implements NavigationMode {
   }
 }
 
+const DEG = Math.PI / 180;
 const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 interface Dir {

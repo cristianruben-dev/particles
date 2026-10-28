@@ -1,3 +1,7 @@
+import '@fontsource-variable/geist';
+import '@fontsource-variable/geist-mono';
+import '@fontsource/instrument-serif/latin.css';
+import '@fontsource/instrument-serif/latin-ext.css';
 import './style.css';
 import { config } from './config';
 import { Engine } from './core/Engine';

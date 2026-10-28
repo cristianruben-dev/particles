@@ -12,6 +12,8 @@ export interface BloomControls {
   strength: { value: number };
   threshold: { value: number };
   radius: { value: number };
+  /** Resolución del bloom respecto a la pantalla (perfil de calidad). */
+  setResolutionScale(scale: number): void;
 }
 
 export function createPipeline(renderer: THREE.WebGPURenderer, scene: THREE.Scene, camera: THREE.Camera) {
@@ -24,6 +26,7 @@ export function createPipeline(renderer: THREE.WebGPURenderer, scene: THREE.Scen
     strength: bloomPass.strength,
     threshold: bloomPass.threshold,
     radius: bloomPass.radius,
+    setResolutionScale: (scale) => bloomPass.setResolutionScale(scale),
   };
 
   // TODO(fase 4): efecto warp (estiramiento radial + aberración cromática) según la velocidad de la cámara.

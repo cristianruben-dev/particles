@@ -33,9 +33,6 @@ export const config = {
    */
   surfaceMaxDepth: 23,
 
-  /** Límite de densidad de píxeles. Por debajo de la nativa la imagen se reescala y se ve borrosa. */
-  maxPixelRatio: 2,
-
   /** Panel de debug activado con ?debug en la URL. */
   debug: new URLSearchParams(location.search).has('debug'),
 } as const;

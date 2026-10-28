@@ -1,158 +1,219 @@
 /**
- * HUD: cuerpos (planetas y lunas del sistema enfocado), datos de vuelo, tiempo, fecha y
- * escala. Ver docs/ARQUITECTURA.md §11.
+ * Interfaz: compone y coloca los componentes, y reparte el estado de cada frame.
+ * Ver docs/ARQUITECTURA.md §11.
+ *
+ * - Arriba a la izquierda, el cuerpo de referencia; arriba a la derecha, el rendimiento y los
+ *   ajustes; abajo, el tiempo, el navegador de cuerpos y las herramientas; a la derecha, la ficha.
+ * - Las cifras se repintan a ~20 Hz y solo si cambian (`setText`).
+ * - Tras un clic con el ratón el botón suelta el foco: así Espacio sigue pausando y no
+ *   repite el clic. Con el teclado (Tab) el foco se queda y se ve.
  */
-import { AU_KM } from '../astro/units';
+import type { BodyId } from '../astro/bodies';
+import { FACTS } from '../astro/facts';
+import type { FrameStats, Quality } from '../core/Quality';
+import { BodyDock, type HudBody } from './BodyDock';
+import { accentColor, el } from './dom';
+import { FocusTitle, type TitleActions } from './FocusTitle';
+import { InfoPanel, bodyKicker, type InfoLive } from './InfoPanel';
+import { Coach, HelpOverlay, Toasts, TravelCard } from './Overlays';
+import { PerfMeter } from './PerfMeter';
+import { SettingsPanel, type SettingsToggle } from './SettingsPanel';
+import { TimeBar, type TimeActions, type TimeState } from './TimeBar';
+import { Toolbar, type ToolState } from './Toolbar';
 
-export interface HudState {
-  focusName: string;
-  altitudeKm: number;
-  date: Date;
-  timeLabel: string;
-  paused: boolean;
-  fps: number;
-  backend: 'WebGPU' | 'WebGL2';
-  particles: number;
-  scale: 'compressed' | 'real';
-  orbits: boolean;
-  labels: boolean;
-}
+export type { HudBody } from './BodyDock';
 
-export interface HudBody {
-  id: string;
-  name: string;
-  /** Planeta al que pertenece (lunas), o null. */
-  parent: string | null;
-  /** Tecla de acceso directo, si tiene. */
-  key?: string;
-}
-
-export interface HudActions {
+export interface HudActions extends TimeActions, TitleActions {
   bodies: HudBody[];
+  quality: Quality;
+  /** Preferencias del panel de ajustes. */
+  toggles: SettingsToggle[];
   onSelectBody(id: string): void;
-  onSlower(): void;
-  onTogglePause(): void;
-  onFaster(): void;
-  onNow(): void;
-  onSetDate(ms: number): void;
-  onToggleScale(): void;
+  onSetScale(mode: 'compressed' | 'real'): void;
   onToggleOrbits(): void;
   onToggleLabels(): void;
+  onToggleFly(): void;
+}
+
+export interface HudState extends InfoLive {
+  focusId: BodyId;
+  focusName: string;
+  altitudeKm: number;
+  /** Velocidad en vuelo libre (km/s), o null en órbita. */
+  speedKmS: number | null;
+  landable: boolean;
+  nearGround: boolean;
+  descending: boolean;
+  time: TimeState;
+  tools: ToolState;
+  travel: { name: string; progress: number; distanceKm: number } | null;
+  stats: FrameStats;
+  particles: number;
+  pixelRatio: number;
+  backend: string;
 }
 
 export class Hud {
-  private readonly info: HTMLElement;
-  private readonly timeLabel: HTMLElement;
-  private readonly pauseButton: HTMLButtonElement;
-  private readonly scaleButton: HTMLButtonElement;
-  private readonly orbitsButton: HTMLButtonElement;
-  private readonly labelsButton: HTMLButtonElement;
-  private readonly dateInput: HTMLInputElement;
-  private readonly moonsNav: HTMLElement;
-  private readonly bodyButtons = new Map<string, HTMLButtonElement>();
-  private lastText = '';
+  readonly toasts = new Toasts();
+  readonly coach = new Coach();
+  private readonly layer: HTMLElement;
+  private readonly title: FocusTitle;
+  private readonly dock: BodyDock;
+  private readonly time: TimeBar;
+  private readonly tools: Toolbar;
+  private readonly perf: PerfMeter;
+  private readonly settings: SettingsPanel;
+  private readonly info: InfoPanel;
+  private readonly help: HelpOverlay;
+  private readonly travel = new TravelCard();
+  private readonly fly: HTMLElement;
+  private activeId = '';
+  private lastRender = 0;
+  private hidden = false;
+  private flying = false;
 
-  constructor(root: HTMLElement, private readonly actions: HudActions) {
-    root.innerHTML = `
-      <div class="hud-top">
-        <nav class="hud-bodies"></nav>
-        <nav class="hud-moons"></nav>
-      </div>
-      <div class="hud-panel">
-        <div class="hud-info"></div>
-        <div class="hud-row">
-          <button data-act="slower" title="Más lento (,)">«</button>
-          <button data-act="pause" title="Pausa (espacio)">❚❚</button>
-          <button data-act="faster" title="Más rápido (.)">»</button>
-          <span class="hud-rate"></span>
-          <button data-act="now" title="Volver a ahora (N)">ahora</button>
-          <input class="hud-date" type="datetime-local" step="60" title="Ir a una fecha (UTC)" />
-        </div>
-        <div class="hud-row">
-          <button data-act="scale" title="Escala comprimida o real (E)"></button>
-          <button data-act="orbits" title="Órbitas (O)">órbitas</button>
-          <button data-act="labels" title="Nombres (L)">nombres</button>
-        </div>
-        <div class="hud-hint">Arrastra: girar · Rueda: zoom · Clic: viajar · 0–9: Sol y planetas</div>
+  constructor(private readonly root: HTMLElement, private readonly actions: HudActions) {
+    this.layer = el('div', 'ui-layer');
+
+    this.title = new FocusTitle({
+      onLand: actions.onLand,
+      onAscend: actions.onAscend,
+      onInfo: () => this.toggleInfo(),
+    });
+    this.perf = new PerfMeter(() => this.toggleSettings());
+    this.settings = new SettingsPanel(actions.quality, actions.toggles, () => this.settings.setOpen(false));
+    this.time = new TimeBar(actions);
+    this.dock = new BodyDock(actions.bodies, (id) => actions.onSelectBody(id));
+    this.tools = new Toolbar({
+      onSetScale: actions.onSetScale,
+      onToggleOrbits: actions.onToggleOrbits,
+      onToggleLabels: actions.onToggleLabels,
+      onToggleFly: actions.onToggleFly,
+      onHelp: () => this.toggleHelp(),
+      onSettings: () => this.toggleSettings(),
+      onHideUi: () => this.toggleHidden(),
+    });
+    this.info = new InfoPanel({ onClose: () => this.info.setOpen(false), onLand: actions.onLand });
+    this.help = new HelpOverlay(() => this.help.setOpen(false));
+
+    this.fly = el('div', 'ui-fly');
+    this.fly.innerHTML = `
+      <div class="ui-reticle" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+      <div class="ui-fly-hint glass">
+        <span class="ui-fly-badge">Vuelo libre</span>
+        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> moverse</span>
+        <span><kbd>R</kbd><kbd>F</kbd> subir · bajar</span>
+        <span><kbd>Q</kbd><kbd>E</kbd> girar</span>
+        <span><kbd>Mayús</kbd> turbo</span>
+        <span><kbd>Esc</kbd> salir</span>
       </div>`;
-    this.info = root.querySelector('.hud-info')!;
-    this.timeLabel = root.querySelector('.hud-rate')!;
-    this.pauseButton = root.querySelector('[data-act="pause"]')!;
-    this.scaleButton = root.querySelector('[data-act="scale"]')!;
-    this.orbitsButton = root.querySelector('[data-act="orbits"]')!;
-    this.labelsButton = root.querySelector('[data-act="labels"]')!;
-    this.dateInput = root.querySelector('.hud-date')!;
-    this.moonsNav = root.querySelector('.hud-moons')!;
 
-    const nav = root.querySelector('.hud-bodies')!;
-    for (const body of actions.bodies) {
-      const b = document.createElement('button');
-      b.textContent = body.name;
-      b.title = body.key ? `${body.name} (${body.key})` : body.name;
-      b.addEventListener('click', () => actions.onSelectBody(body.id));
-      (body.parent ? this.moonsNav : nav).append(b);
-      this.bodyButtons.set(body.id, b);
-    }
-
-    const handlers: Record<string, () => void> = {
-      slower: actions.onSlower,
-      pause: actions.onTogglePause,
-      faster: actions.onFaster,
-      now: actions.onNow,
-      scale: actions.onToggleScale,
-      orbits: actions.onToggleOrbits,
-      labels: actions.onToggleLabels,
+    const region = (cls: string, ...children: HTMLElement[]) => {
+      const r = el('div', `ui-region ${cls}`);
+      r.append(...children);
+      return r;
     };
-    root.querySelectorAll<HTMLButtonElement>('[data-act]').forEach((b) =>
-      b.addEventListener('click', () => handlers[b.dataset.act!]()),
+    this.layer.append(
+      region('ui-tl', this.title.el),
+      region('ui-tr', this.perf.el, this.settings.el),
+      region('ui-bottom', this.time.el, region('ui-bc', this.coach.el, this.dock.el), this.tools.el),
+      region('ui-right', this.info.el),
+      this.travel.el,
+      this.fly,
+      this.toasts.el,
+      this.help.el,
     );
-    // La fecha del campo se interpreta en UTC, como la del HUD.
-    this.dateInput.addEventListener('change', () => {
-      const ms = Date.parse(`${this.dateInput.value}:00Z`);
-      if (!Number.isNaN(ms)) actions.onSetDate(ms);
+    root.append(this.layer);
+
+    // Tras un clic con el ratón, fuera el foco (e.detail = 0 cuando lo pulsa el teclado).
+    root.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (b && e.detail > 0) setTimeout(() => b.blur());
+    });
+    // Clic fuera de los ajustes: se cierran.
+    document.addEventListener('pointerdown', (e) => {
+      const t = e.target as Node;
+      if (this.settings.open && !this.settings.el.contains(t) && !this.perf.el.contains(t) && !this.tools.el.contains(t)) this.settings.setOpen(false);
     });
   }
 
-  setActiveBody(id: string): void {
-    for (const [bodyId, b] of this.bodyButtons) b.classList.toggle('active', bodyId === id);
-    // Lunas visibles: las del planeta enfocado (o las hermanas de la luna enfocada).
-    const focus = this.actions.bodies.find((b) => b.id === id);
-    const system = focus?.parent ?? id;
-    for (const body of this.actions.bodies) {
-      if (body.parent) this.bodyButtons.get(body.id)!.hidden = body.parent !== system;
+  /** Atajos propios de la interfaz. Devuelve true si la tecla era suya. */
+  handleKey(e: KeyboardEvent): boolean {
+    const key = e.key.toLowerCase();
+    if (e.key === 'Escape') {
+      if (this.help.open) this.help.setOpen(false);
+      else if (this.settings.open) this.settings.setOpen(false);
+      else if (this.info.open) this.info.setOpen(false);
+      else if (this.hidden) this.toggleHidden();
+      else return false;
+      return true;
     }
-    // El planeta del sistema queda marcado aunque esté enfocada una de sus lunas.
-    for (const body of this.actions.bodies) {
-      if (!body.parent) this.bodyButtons.get(body.id)!.classList.toggle('system', body.id === system && body.id !== id);
-    }
+    if (e.key === '?') this.toggleHelp();
+    else if (key === 'u') this.toggleHidden();
+    else if (key === 'i') this.toggleInfo();
+    else return false;
+    return true;
   }
 
-  render(s: HudState): void {
-    const text = [
-      `<strong>${s.focusName}</strong> · altitud ${formatDistance(s.altitudeKm)}`,
-      `${s.date.toISOString().replace('T', ' ').slice(0, 19)} UTC`,
-      `${s.fps.toFixed(0)} fps · ${s.backend} · ${s.particles.toLocaleString('es')} partículas`,
-    ].join('<br>');
-    // Solo tocar el DOM cuando cambia algo.
-    if (text !== this.lastText) {
-      this.info.innerHTML = text;
-      this.lastText = text;
-    }
-    this.timeLabel.textContent = s.paused ? 'en pausa' : s.timeLabel;
-    this.pauseButton.textContent = s.paused ? '▶' : '❚❚';
-    this.scaleButton.textContent = s.scale === 'real' ? 'escala real' : 'escala comprimida';
-    this.orbitsButton.classList.toggle('on', s.orbits);
-    this.labelsButton.classList.toggle('on', s.labels);
-    if (document.activeElement !== this.dateInput) {
-      const value = s.date.toISOString().slice(0, 16);
-      if (this.dateInput.value !== value) this.dateInput.value = value;
-    }
+  get uiHidden(): boolean {
+    return this.hidden;
   }
-}
 
-export function formatDistance(km: number): string {
-  if (km >= 0.1 * AU_KM) return `${(km / AU_KM).toLocaleString('es', { maximumFractionDigits: 2 })} UA`;
-  if (km >= 1e6) return `${(km / 1e6).toLocaleString('es', { maximumFractionDigits: 2 })} millones de km`;
-  if (km >= 10) return `${Math.round(km).toLocaleString('es')} km`;
-  return `${(km * 1000).toLocaleString('es', { maximumFractionDigits: 0 })} m`;
+  setActiveBody(id: BodyId, landable: boolean): void {
+    this.activeId = id;
+    this.dock.setActive(id);
+    const body = this.actions.bodies.find((b) => b.id === id);
+    if (body) this.root.style.setProperty('--body', accentColor(body.color));
+    this.info.show(id, landable);
+  }
+
+  render(s: HudState, now: number): void {
+    this.travel.update(s.travel);
+    if (s.tools.flying !== this.flying) {
+      this.flying = s.tools.flying;
+      this.root.classList.toggle('flying', this.flying);
+    }
+    this.perf.update(s.stats, this.actions.quality.profile.name, now);
+    if (now - this.lastRender < 50) return;
+    this.lastRender = now;
+
+    if (s.focusId !== this.activeId) this.setActiveBody(s.focusId, s.landable);
+    const site = FACTS[s.focusId].site;
+    this.title.update({
+      id: s.focusId,
+      name: s.focusName,
+      kicker: bodyKicker(s.focusId),
+      altitudeKm: s.altitudeKm,
+      sunDistanceKm: s.focusId === 'sun' ? 695_700 : s.sunDistanceKm,
+      speedKmS: s.speedKmS,
+      landable: s.landable,
+      nearGround: s.nearGround,
+      descending: s.descending,
+      siteName: site?.name ?? null,
+    });
+    this.time.update(s.time);
+    this.tools.update(s.tools);
+    this.info.landDisabled = s.descending;
+    this.info.update(s, now);
+    this.settings.update({ particles: s.particles, pixelRatio: s.pixelRatio, backend: s.backend, fps: s.stats.fps, frameMs: s.stats.frameMs }, now);
+  }
+
+  private toggleInfo(): void {
+    this.info.setOpen(!this.info.open);
+  }
+
+  private toggleSettings(): void {
+    this.settings.setOpen(!this.settings.open);
+  }
+
+  private toggleHelp(): void {
+    this.help.setOpen(!this.help.open);
+    this.coach.dismiss();
+  }
+
+  private toggleHidden(): void {
+    this.hidden = !this.hidden;
+    this.root.classList.toggle('ui-hidden', this.hidden);
+    if (this.hidden) this.toasts.show('Interfaz oculta · pulsa U o Esc para volver', 'eye', 2.6);
+  }
 }
