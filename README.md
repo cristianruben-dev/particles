@@ -20,13 +20,15 @@ Abre la URL que muestra Vite. Añade `?debug` para ver el panel de debug.
 | `npm run typecheck` | Solo la comprobación de tipos |
 | `npm run preview` | Sirve el build de producción |
 | `node scripts/build-stars.mjs <catalog>` | Regenera `public/data/stars.bin` desde el Yale Bright Star Catalog |
-| `python3 -I scripts/build-mars-height.py <img> <png>` | Convierte el MOLA de Marte en el mapa de altura |
+| `python3 -I scripts/build-mars-height.py <img> <png>` | Convierte el MOLA de Marte en el mapa de altura del globo (8 bits) |
+| `python3 -I scripts/build-height-u16.py mola\|lola …` | Convierte MOLA (Marte) o LOLA (Luna) en el mapa de altura de la superficie (16 bits) |
 
 **Controles:**
 
 | Acción | Cómo |
 |---|---|
-| Girar / acercarse | Arrastrar / rueda |
+| Girar / acercarse | Arrastrar / rueda (hasta 10 m del suelo en los cuerpos rocosos) |
+| Mirar alrededor a ras de suelo | Arrastrar con el botón derecho (o con Mayús) |
 | Viajar a un cuerpo | Clic sobre él, en su nombre o en los botones de arriba (las lunas aparecen al elegir su planeta) |
 | Sol y planetas | Teclas `0`–`9` (0 Sol, 1 Mercurio… 9 Plutón) |
 | Velocidad del tiempo | `,` y `.` (de tiempo real a 1 año/s); espacio pausa; `N` vuelve a ahora; el campo de fecha salta a cualquier día |
@@ -52,7 +54,7 @@ src/
 ├── particles/        ParticleField (GPU), horneado en worker, orden progresivo, LOD, perturbación
 ├── bodies/           Sun, RockyPlanet, GasGiant, Rings, Atmosphere, CloudLayer, AsteroidBelt,
 │                     OrbitLines, Starfield y los niveles de detalle (DetailTier)
-├── surface/          Quadtree cubo-esfera, chunks y pool para el aterrizaje
+├── surface/          Terreno (CPU y GPU), quadtree cubo-esfera, chunks y pool para el aterrizaje
 ├── navigation/       CameraRig + OrbitMode (órbita y viaje entre cuerpos), FreeFly (fase 4)
 ├── postfx/           Bloom y efectos
 └── ui/               HUD, etiquetas y panel de debug

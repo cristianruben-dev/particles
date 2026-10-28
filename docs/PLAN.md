@@ -2,7 +2,7 @@
 
 Cuatro fases. Cada una termina en algo que se puede abrir en el navegador y disfrutar. Cada fase tiene un **criterio de "hecho"** comprobable: no se pasa a la siguiente hasta cumplirlo.
 
-Estado: **Fase 2 implementada.** Quedan por comprobar con la ventana delante los 60 fps (fases 1 y 2) y que nada tiemble en escala real. Después: Fase 3.
+Estado: **Fase 3 implementada** (salvo el descenso entre nubes de los gigantes, que pasa a la fase 4). Quedan por comprobar con la ventana delante los 60 fps (fases 1–3) y que nada tiemble en escala real. Después: Fase 4.
 
 ---
 
@@ -81,26 +81,33 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 
 ---
 
-## Fase 3 — Hasta la superficie
+## Fase 3 — Hasta la superficie ✅ (pendiente de medir)
 
-1. `surface/CubeSphereQuadtree` con subdivisión por error en pantalla e histéresis.
-2. `SurfaceChunk` generado en GPU: heightmap real + ruido fractal procedural.
-3. Pool de chunks y cola de generación con prioridad.
-4. Profundidad: `reversedDepthBuffer` y `near`/`far` dinámicos.
-5. Zoom de `OrbitMode` proporcional a la altitud; colisión con el suelo.
-6. Heightmaps de alta resolución con carga progresiva (Tierra, Luna, Marte, Mercurio).
-7. Gigantes gaseosos: descenso entre capas de nubes.
+1. [x] `surface/CubeSphereQuadtree` sobre un cubo equiangular, con división por separación de partícula en pantalla, histéresis, frustum y horizonte por nodo (§7.1).
+2. [x] `SurfaceChunk` generado en GPU: mapa de alturas real (B-spline) + ruido fractal sobre hash entero, con la misma función en la CPU para la colisión (§7.2). Todo relativo al centro del chunk (float64 en la CPU): sin escalones ni costuras a escala de centímetros.
+3. [x] Pool de chunks y generación por lotes (hasta 32 por frame); reparto en ruido azul progresivo con densidad continua por partícula (§7.3).
+4. [x] Profundidad: profundidad invertida y plano cercano dinámico hasta 10⁻⁹ unidades.
+5. [x] Zoom sobre la altitud sobre el suelo real, cámara solidaria con el cuerpo a ras de suelo, mirada hacia el horizonte y "mirar alrededor" con el botón derecho (§9).
+6. [x] Mapas de altura de 16 bits para la Luna (LOLA) y Marte (MOLA). Pendiente: más resolución en la Tierra (hoy 8 bits y 4k) y carga progresiva por teselas.
+7. [ ] Gigantes gaseosos: descenso entre capas de nubes → **fase 4** (la cámara se queda sobre la cima de las nubes).
+8. [x] Extra: horizonte con cielo y suelo en el fondo, y estrellas solo por encima del horizonte (§7.4).
 
 **Hecho cuando:**
-- Se baja de forma continua desde la órbita hasta unos 10 m del suelo de la Tierra, la Luna y Marte, sin cortes ni parpadeo.
-- Se reconocen accidentes reales (Himalaya, Valles Marineris, cráter Tycho).
-- 60 fps con unos 4–6M de partículas en total.
+- [x] Se baja de forma continua desde la órbita hasta unos 10 m del suelo de la Tierra, la Luna y Marte, sin cortes ni parpadeo. Verificado con descensos automáticos de 2000 km a 10 m (900 frames) sobre el Himalaya, Tycho y Valles Marineris: sin posiciones no finitas, la cámara nunca por debajo de 11 m del suelo dibujado, plano cercano siempre delante del suelo y sin huecos entre el globo y la superficie. Al subir, la superficie se libera (321 → 183 MB) y al volver a bajar se rehace.
+- [~] Se reconocen accidentes reales: el pico central y la sombra de Tycho, los cañones de Valles Marineris y la masa nevada del Himalaya. La Tierra, con un mapa de 10 km por texel, no tiene picos individuales: por debajo es ruido procedural.
+- [ ] 60 fps con unos 4–6M de partículas: pendiente de medir con la ventana delante. En el panel oculto del navegador se vieron 60–70 fps a 10 m del suelo con ~3M de partículas.
+
+**Pendientes detectados en la fase 3:**
+- Patrón de mosaico de la tesela de ruido azul en algunos ángulos y ligeros cambios de textura en los bordes de chunk (distintas octavas finas por nivel).
+- A 150 km de la Luna el suelo se ve muy contrastado (albedo LRO, puntos claros sobre huecos oscuros).
+- La perturbación con el ratón no actúa sobre los chunks.
 
 ---
 
 ## Fase 4 — Pulido y experiencia
 
 1. `FreeFlyMode` 6DOF con velocidad adaptativa.
+1b. Gigantes gaseosos: descenso entre capas de nubes volumétricas (aplazado de la fase 3).
 2. Efecto *warp* en viajes.
 3. Panel de información completo por cuerpo.
 4. Sonido ambiente (opcional; zumbido grave cerca de los gigantes, silencio en el vacío).

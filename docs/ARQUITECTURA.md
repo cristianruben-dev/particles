@@ -70,7 +70,8 @@ El sistema solar mide unos 9.000 millones de km y queremos ver detalles de metro
 - **Origen flotante** (`core/FloatingOrigin.ts`): la cámara de Three.js está siempre en `(0,0,0)`. Cada frame, cada objeto se coloca en `(sceneD − cameraScene)`, restado en float64 y solo después convertido a float32. Lo que está cerca de la cámara siempre tiene máxima precisión. **Solo `ScaleSystem` convierte km a escena y solo `FloatingOrigin` pasa de escena a float32.**
 - **Partículas en espacio local**: las partículas de un planeta se guardan relativas al centro del planeta (en radios), nunca en coordenadas heliocéntricas. Solo el `Object3D` del planeta se mueve con el origen flotante.
 - **Chunks de superficie** guardan posiciones relativas al centro del chunk (ver §7), así un chunk de 100 m tiene precisión de milímetros.
-- **Profundidad**: `WebGPURenderer({ reversedDepthBuffer: true })` cuando está disponible (mejor precisión que el logarítmico y sin coste en el fragment shader); `logarithmicDepthBuffer: true` como respaldo. Además, `near`/`far` de la cámara se ajustan dinámicamente según la distancia al cuerpo más cercano.
+- **Profundidad**: `WebGPURenderer({ reversedDepthBuffer: true })` cuando está disponible (mejor precisión que el logarítmico y sin coste en el fragment shader); `logarithmicDepthBuffer: true` como respaldo. El plano cercano es el 5 % de la distancia al suelo (hasta 10⁻⁹ unidades: a 10 m de la Tierra comprimida son ~10⁻⁵) y el lejano está en 10¹⁰: con profundidad invertida en float cabe todo.
+- **Chunks de superficie**: cada uno es un objeto en su centro (posición en float64) y sus partículas guardan el desplazamiento respecto a él. Three.js compone las matrices en float64 en la CPU y solo sube a la GPU la matriz modelo-vista, con una traslación pequeña (el chunk está cerca de la cámara).
 
 ### 4.3 Sistema de escalas (`scale/ScaleSystem.ts`)
 
@@ -191,28 +192,52 @@ Al pasar el cursor por encima, las partículas cercanas se desordenan y luego vu
 
 ## 7. Superficie y aterrizaje (`surface/`)
 
-### 7.1 Cubo-esfera + quadtree
+Se baja de forma continua desde la órbita hasta ~10 m del suelo en todos los cuerpos rocosos (salvo Venus, que solo enseña nubes). Verificado con descensos automáticos de 2000 km a 10 m sobre el Himalaya, Tycho y Valles Marineris (900 frames cada uno): ninguna posición no finita, la cámara nunca por debajo de 11 m del suelo dibujado, el plano cercano siempre por delante del suelo y sin huecos de cobertura entre el globo y la superficie.
 
-- Cada planeta rocoso se modela como un **cubo proyectado a esfera** (6 caras). Cada cara es la raíz de un **quadtree**.
-- Cada nodo del quadtree es un **chunk**: un parche de superficie con un número fijo de partículas (p. ej. 128×128 = 16.384).
-- Criterio de subdivisión: si `tamañoDelChunk / distanciaACámara > umbral`, el nodo se divide en 4 hijos. Si baja de `umbral × histéresis`, se fusiona. La histéresis evita parpadeo.
-- Como cada chunk tiene las mismas partículas pero cubre menos área, **la densidad crece de forma exponencial al acercarse**. Con 12–15 niveles se pasa de un planeta entero a parches de metros.
+### 7.1 Cubo-esfera + quadtree (`cubeSphere.ts`, `CubeSphereQuadtree.ts`)
 
-### 7.2 Generación de un chunk (`SurfaceChunk.ts`)
+- **Cubo equiangular**: la coordenada de cara u ∈ [−1, 1] es un ángulo y el punto del cubo es `N + tan(u·π/4)·A + tan(v·π/4)·B` (distorsión de área < 1,5×; la proyección gnómica pura llega a 5×). Cada cara es la raíz de un quadtree.
+- Cada nodo guarda en float64 su dirección central, su medio ángulo y, la primera vez que hace falta, su altura en el centro y la máxima (centro y esquinas).
+- **División por separación de partícula en pantalla**: se divide si pasa de 4 px y se fusiona por debajo de 3,1 px (histéresis). Profundidad máxima 23 (`config.surfaceMaxDepth`): a 10 m de la Tierra hacen falta partículas a ~1,5 cm.
+- **Solo lo visible**: frustum de la cámara (los 4 planos laterales) contra la esfera del nodo, y horizonte de la esfera más lo que asoma por detrás la parte más alta del nodo. Con el margen global de montañas o un cono circular salían 5M de partículas a ras de suelo; con esto, ~400 chunks (2,6M).
 
-Todo en un *compute shader*:
+### 7.2 El terreno: la misma función en CPU y GPU (`terrain.ts`, `TerrainData.ts`)
 
-1. Rejilla de `N×N` puntos en la cara del cubo con jitter → proyectar a esfera (mapeo *cube-to-sphere* que conserva el área).
-2. Altura = **heightmap real** (resolución limitada, p. ej. 8k–16k para la Tierra) + **ruido fractal procedural** (fBm/ridged, `mx_noise` de TSL) que añade detalle por debajo de la resolución del dato. La amplitud del ruido escala con el tamaño del chunk.
-3. Color = albedo real + variación procedural según pendiente y altura (roca, nieve, arena).
-4. Posición guardada **relativa al centro del chunk** (precisión, ver §4.2).
+`altura(dir) = relieve · (mapa(dir) − referencia) + tierra · ruido(dir)`, en radios. La CPU la usa para la colisión de la cámara y la GPU para los chunks: si no coincidieran, la cámara chocaría con un suelo que no es el que se ve.
 
-### 7.3 Gestión
+- **Mapa de alturas**: B-spline cúbica hecha a mano (16 lecturas de una textura r32float) con la misma fórmula en las dos. Con bilineal el terreno eran facetas planas de un texel (10 km en la Tierra) con aristas rectas muy visibles; el filtrado por hardware, además, tiene poca precisión dentro del texel. El mapa se decodifica una vez y la misma matriz va a la CPU y a la GPU.
+- **Ruido de valor sobre un hash entero** (u32 que desborda igual en JS y en WGSL): octavas 3D gruesas sobre la dirección (continuas entre caras) y octavas 2D finas sobre la rejilla de cada cara, con la celda calculada en enteros desde el índice del nodo del quadtree. Amplitud = rugosidad × longitud de onda, mayor en las montañas; sin ruido en el agua. Las octavas llegan a dos separaciones de partícula del chunk.
+- **Relieve a ras de suelo** (`presets.surface.relief`): la exageración pensada para la órbita (21× en la Tierra: el Everest tendría 190 km) se modera al bajar, en el globo, hasta ~3×. Así no hay salto cuando aparecen los chunks, que usan siempre el valor de suelo.
+- **Mapas de 16 bits** para la Luna (LOLA) y Marte (MOLA): binario `.u16` de 4096×2048 (`scripts/build-height-u16.py`).
 
-- Pool de buffers reutilizables: los chunks no se crean ni destruyen en caliente, se reciclan.
-- Máximo de chunks activos por frame y cola de generación con prioridad por distancia a la cámara.
-- Los chunks hijos aparecen con la misma animación de "condensación" del LOD.
-- Gigantes gaseosos: **no tienen superficie**. Al "bajar" entras en capas de nubes volumétricas de partículas y luego aparece un límite de profundidad con niebla.
+**Precisión (lo más delicado).** A profundidad 22 un chunk mide 2,4 m y una partícula ~1,5 cm; en float32 una dirección absoluta tiene ~0,4 m de error en la Tierra. Reglas:
+
+- Todo lo que depende de la posición absoluta se evalúa **respecto al centro del chunk**, precalculado en float64 en la CPU: texel del centro (entero + resto) y su derivada, celda entera y resto de cada octava 3D, índices del nodo para las octavas 2D.
+- El desplazamiento de cada partícula se calcula sin restar vectores casi iguales: `normalize(q0 + δ) − normalize(q0) = δ/L − q0·x / (L·L0·(L + L0))`.
+- **Parte entera y fracción siempre por separado**: sumadas (un texel ~700), la fracción en float32 solo tenía unos pocos valores dentro de un chunk y salían terrazas de 7 cm (se veían como rayas a ras de suelo).
+- El mapa se interpola **restando la altura del centro a cada texel antes de sumar** (restar al final dos alturas de ~0,6 deja escalones de ~2 mm que la normal convierte en sombras).
+- `tan` de ángulos diminutos con serie de Taylor: la función rápida de la GPU tiene error absoluto (~10⁻⁴ en Apple).
+- Diferencia medida entre la altura de la GPU y la de la CPU: ~4 cm en los chunks cercanos (frente a 10 m de altitud mínima) y 15–50 cm en los lejanos.
+
+### 7.3 Chunks (`Surface.ts`, `SurfaceChunk.ts`, `ChunkPool.ts`)
+
+- **Pool**: buffers para 448 chunks de 80×80 partículas (2,9M, ~140 MB) con posición relativa al centro, color y normal del terreno. Se reservan al activar la superficie y se liberan al salir (verificado: 321 → 183 MB al subir).
+- **Generación en GPU**: una pasada compute por frame para hasta 32 chunks, con los datos de cada uno en un buffer de trabajos. Normal del terreno por diferencias finitas, color del albedo real oscurecido en las pendientes, luces nocturnas y agua.
+- **Colocación**: cada chunk es un `Sprite` hijo del grupo que gira con el cuerpo, en su centro (float64); todos comparten un material con uniforms por objeto (`onObjectUpdate`: hueco del pool, separación, aparición).
+- **Reparto de las partículas: ruido azul progresivo** (tesela de 6400 puntos con el algoritmo del mejor candidato de Mitchell, desplazada por chunk). Se probaron una rejilla con jitter y la secuencia R2 (guardan filas que, con el suelo de canto, se ven como rayas) y el azar puro (grumos, ruido de televisión).
+- **Densidad continua por partícula**: en el shader, cada partícula calcula a su distancia cuántas hacen falta para ~2,6 px de separación; como el orden es progresivo, su índice sirve de umbral y los puntos crecen cuando se dibujan menos. Sin saltos de densidad entre chunks ni entre niveles.
+- Al dividir, el padre sigue dibujándose y se funde (0,35 s) mientras aparecen los hijos.
+- **Relevo globo ↔ superficie**: la superficie se crea cuando el globo ya no da 2,6 px (fracción de detalle 0,8; sale por debajo de 0,55) y el globo se oculta cuando el quadtree visible está completo. Nubes y atmósfera se desvanecen al bajar por debajo de ellas; la luz pasa de la normal de la esfera a la del terreno entre 0,08 y 0,01 radios de altitud.
+
+### 7.4 Horizonte (`core/Horizon.ts`)
+
+Entre las partículas del terreno hay aire (el estilo del proyecto): por los huecos se veía el cielo azul (el suelo parecía lavado y cada nivel de detalle se veía de un tono) o las estrellas (en la Luna). El fondo de la escena es ahora un degradado: cielo con el color de la atmósfera de día por encima del horizonte (que baja con la altitud) y, por debajo, un tono oscuro del albedo del suelo bajo la cámara. Las estrellas solo se dibujan por encima del horizonte y se apagan de día.
+
+### 7.5 Pendiente
+
+- **Gigantes gaseosos**: bajar entre capas de nubes (fase 4). De momento la cámara se queda sobre la cima de las nubes.
+- Patrón de mosaico de la tesela de ruido azul en algunos ángulos, y bordes de chunk con un ligero cambio de textura (las octavas finas que tiene cada nivel).
+- Tierra: el mapa de alturas es de 8 bits y 4k (10 km por texel); por debajo de eso todo es ruido procedural.
 
 ## 8. Tipos de cuerpo (`bodies/`)
 
@@ -234,7 +259,8 @@ Todos implementan `CelestialBody` (`bodies/CelestialBody.ts`): `update(ctx)`, `s
 
 `CameraRig` mantiene la posición de la cámara en espacio de escena (float64, `origin.cameraScene`), el punto al que mira y la distancia a la superficie (para el plano cercano dinámico). Delega en el modo activo:
 
-- **`OrbitMode`** ✅: arrastrar para girar alrededor del cuerpo enfocado y rueda para acercarse. La distancia se guarda en km verdaderos y pasa a escena con `localDistance` del cuerpo enfocado (§4.3). El zoom es multiplicativo sobre la **altitud**, para poder pasar de cientos de UA a la superficie con la rueda (fase 2: mínimo 4 % del radio; fase 3: hasta el suelo).
+- **`OrbitMode`** ✅: arrastrar para girar alrededor del cuerpo enfocado y rueda para acercarse. El zoom es multiplicativo sobre la **altitud sobre el suelo** (km): con terreno por debajo del radio medio (cráteres, Hellas) la distancia al centro no sirve. La distancia al centro es radio + suelo bajo la cámara (`groundHeightKm`, la misma función que dibuja los chunks, con todo el detalle) + altitud, y pasa a escena con `localDistance` del cuerpo enfocado (§4.3). Mínimo: 10 m sobre el suelo en los cuerpos con superficie, 4 % del radio en el resto.
+- **A ras de suelo** ✅: por debajo de 0,1 radios la cámara pasa al marco del cuerpo (gira con él: a 10 min/s la Tierra se desplazaría ~70 m por frame bajo los pies) y la mirada se inclina hacia el horizonte con la altitud (escala logarítmica entre 0,05 radios y 3·10⁻⁶), con la vertical del lugar como "arriba". Arrastrar con el botón derecho (o con Mayús) cambia el rumbo y la inclinación; el arrastre normal mueve unos centímetros por píxel a 10 m. La orientación de los cuerpos se calcula antes que la cámara: si no, el suelo se medía con el giro del frame anterior y la cámara quedaba cientos de metros por encima o por debajo.
 - **Viaje entre cuerpos** ✅ (en `OrbitMode.focusOn`, no en un modo aparte): dura de 2,4 a 5,5 s según cuánto cambia la escala; la distancia se interpola en escala logarítmica; la dirección gira (slerp) de la de salida a una **llegada por el lado de día** (37° del Sol, algo por encima del plano) y a mitad de viaje la cámara **sube sobre el plano del sistema**, así se ven la salida y la llegada. La mirada pasa del cuerpo de origen al de destino en el primer 40 %. Al arrancar, la cámara también mira el lado de día.
 - **`FreeFlyMode`**: WASD + ratón (pointer lock) y Q/E para alabeo. Velocidad automática proporcional a la distancia al cuerpo más cercano (lento cerca, rapidísimo en el vacío), con Shift como multiplicador. Colisión suave con la superficie.
 - Selección ✅: clic (sin arrastre) con *ray picking* contra esferas analíticas (`navigation/picking.ts`, radio mínimo de 14 px para cuerpos diminutos), clic en una etiqueta, botones del HUD o teclas 0–9.

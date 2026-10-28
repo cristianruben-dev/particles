@@ -104,16 +104,18 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     textures: { albedo: tex('moon', 'albedo_2k.jpg'), height: tex('moon', 'height_1k.jpg') },
     heightReference: 0.5,
     reliefScale: 0.04,
-    surface: { relief: 0.02, roughness: 0.045 },
+    // LOLA de 16 bits (−10 km → 0, +10 km → 1): mismo 0,5 de referencia que el mapa del globo.
+    surface: { relief: 0.02, roughness: 0.045, height: tex('moon', 'height_4k.u16'), heightSize: { width: 4096, height: 2048 } },
   },
   mars: {
     count: 800_000,
     textures: { albedo: tex('mars', 'albedo_4k.jpg'), height: tex('mars', 'height_3k.png') },
     gain: 1.3,
-    heightReference: 0.28,
+    heightReference: 0.279,
     reliefScale: 0.035,
     atmosphere: { count: 60_000, thickness: 0.025, dayColor: 0xf3c9a0, twilightColor: 0x6f9bd8, strength: 0.45 },
-    surface: { relief: 0.015, roughness: 0.035 },
+    // MOLA de 16 bits con la misma escala que el mapa del globo (−8200 m → 0, 21200 m → 1).
+    surface: { relief: 0.015, roughness: 0.035, height: tex('mars', 'height_4k.u16'), heightSize: { width: 4096, height: 2048 } },
   },
   io: {
     count: 300_000,

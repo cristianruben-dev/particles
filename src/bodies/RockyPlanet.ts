@@ -344,7 +344,8 @@ export class RockyPlanet extends BaseBody {
     sky.amount = 0;
     if (!this.isFocused || !this.landable) return;
     const smooth = THREE.MathUtils.smoothstep;
-    sky.amount = 1 - smooth(altitude, 0.02, 0.08);
+    // Desde que la superficie sustituye al globo: entre sus puntos se ve suelo, no espacio.
+    sky.amount = 1 - smooth(altitude, 0.12, 0.3);
     if (sky.amount <= 0) return;
     const up = sky.up.copy(this.object3d.position).negate().normalize();
     const d = Math.max(1, altitude + 1);

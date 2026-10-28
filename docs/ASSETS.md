@@ -82,6 +82,13 @@ Dominio público (NASA, JPL, USGS, JHUAPL/SwRI). Las URL de `asc-pds-services.s3
 | `textures/pluto/albedo_2k.jpg` | https://upload.wikimedia.org/wikipedia/commons/a/ad/Pluto_color_mapmosaic.jpg | NASA / JHUAPL / SwRI, New Horizons. Dominio público. Borde izquierdo en 0° E | 5926×2963 → 2048×1024 |
 | `textures/charon/albedo_2k.jpg` | https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Charon_NewHorizons_Global_Mosaic_300m_Jul2017_8bit.tif | NASA / JHUAPL / SwRI / LPI vía USGS, New Horizons. Dominio público | 12693×6347 → 2048×1024 |
 
+### Fase 3 (27/10/2026)
+
+| Archivo en `public/` | Origen | Crédito / licencia | Proceso |
+|---|---|---|---|
+| `textures/moon/height_4k.u16` | https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004720/ldem_16_uint.tif | NASA SVS — CGI Moon Kit (LRO/LOLA, 16 px/grado). Dominio público | `scripts/build-height-u16.py lola`: 5760×2880 → 4096×2048, uint16 little-endian, −10000 m → 0 y +10000 m → 65535 (0 m = 0,5) |
+| `textures/mars/height_4k.u16` | https://pds-geosciences.wustl.edu/mgs/mgs-m-mola-5-megdr-l3-v1/mgsl_300x/meg016/megt90n000eb.img | NASA PDS — MGS MOLA MEGDR (16 px/grado). Dominio público | `scripts/build-height-u16.py mola`: media vuelta y 5760×2880 → 4096×2048, uint16 little-endian, −8200 m → 0 y 21200 m → 65535 (0 m = 0,279, como el mapa del globo) |
+
 Sin archivo: Venus (cimas de nubes con ruido fractal, la superficie de Magellan no es visible), Saturno, Urano y Neptuno (perfil de bandas procedural) y los anillos (bordes publicados de los anillos C, B, A, F y del de Urano, en `bodies/presets.ts`).
 
 Datos de referencia (no se guardan): polos y meridianos de la IAU desde el kernel de NAIF `pck00011.tpc` (https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc), elementos medios de las lunas de https://ssd.jpl.nasa.gov/sats/elem/ y posiciones de verificación de la API de JPL Horizons.
