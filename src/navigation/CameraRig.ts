@@ -14,6 +14,8 @@ export class CameraRig {
   readonly camera: THREE.PerspectiveCamera;
   /** Punto al que mira la cámara (escena, float64). */
   readonly target: Vec3d = vec3d();
+  /** Arriba de la cámara (a ras de suelo, la vertical del lugar). */
+  readonly up: Vec3d = vec3d(0, 1, 0);
   /** Distancia en escena hasta la superficie más cercana (para el plano cercano). */
   clearance = 1;
 
@@ -42,12 +44,12 @@ export class CameraRig {
     this.mode?.update(this, dt);
 
     const p = this.position;
-    this.camera.up.set(0, 1, 0);
+    this.camera.up.set(this.up.x, this.up.y, this.up.z);
     this.camera.lookAt(this.target.x - p.x, this.target.y - p.y, this.target.z - p.z);
 
-    // Plano cercano proporcional a la distancia a la superficie: precisión de profundidad
-    // donde importa. TODO(fase 3): tener en cuenta todos los cuerpos, no solo el enfocado.
-    const near = Math.min(10, Math.max(1e-4, this.clearance * 0.05));
+    // Plano cercano proporcional a la distancia al suelo: a 10 m de la Tierra comprimida
+    // son ~2·10⁻⁴ unidades. Con la profundidad invertida (float) cabe de 10⁻⁹ a 10¹⁰.
+    const near = Math.min(10, Math.max(1e-9, this.clearance * 0.05));
     if (Math.abs(near - this.camera.near) / this.camera.near > 0.05) {
       this.camera.near = near;
       this.camera.updateProjectionMatrix();

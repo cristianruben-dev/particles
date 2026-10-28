@@ -1,7 +1,7 @@
 /**
  * Contrato común de todos los cuerpos. Ver docs/ARQUITECTURA.md §8.
  */
-import type { Object3D, Vector3, WebGPURenderer } from 'three/webgpu';
+import type { Color, Object3D, PerspectiveCamera, Quaternion, Vector3, WebGPURenderer } from 'three/webgpu';
 import type { BodyData } from '../astro/bodies';
 import type { Vec3d } from '../astro/frames';
 import type { FloatingOrigin } from '../core/FloatingOrigin';
@@ -22,6 +22,8 @@ export interface FrameContext {
   pointer: Vector3 | null;
   /** Reloj real en segundos (para animaciones y la perturbación). */
   nowSeconds: number;
+  /** Cámara (en el origen; para el frustum de la superficie). */
+  camera: PerspectiveCamera;
 }
 
 export interface CelestialBody {
@@ -44,8 +46,19 @@ export interface CelestialBody {
   /** Se resuelve cuando la vista previa está horneada y subida. */
   readonly ready: Promise<void>;
 
+  /** Orientación de la fecha (polo y giro). Antes que la cámara: a ras de suelo, ella depende del giro. */
+  orient(timeMs: number): void;
   update(ctx: FrameContext): void;
   /** El cuerpo enfocado carga su detalle completo aunque aún se vea pequeño (§6.3). */
   setFocused(focused: boolean): void;
+
+  /** ¿Se puede bajar hasta el suelo? (§7) */
+  readonly landable: boolean;
+  /** Altura del suelo (km sobre el radio medio) bajo una dirección de escena desde el centro. */
+  groundHeightKm(dir: Vec3d): number;
+  /** Orientación del grupo que gira con el cuerpo (en ejes de escena). */
+  readonly spinQuaternion: Quaternion;
+  /** Fondo visto desde la cámara: cielo, suelo, vertical y caída del horizonte (0 = espacio). */
+  readonly sky: { color: Color; ground: Color; up: Vector3; dip: number; amount: number };
   dispose(): void;
 }

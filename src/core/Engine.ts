@@ -7,7 +7,7 @@ import { AsteroidBelt } from '../bodies/AsteroidBelt';
 import type { CelestialBody, FrameContext } from '../bodies/CelestialBody';
 import { createBody } from '../bodies/createBody';
 import { OrbitLines } from '../bodies/OrbitLines';
-import { createStarfield } from '../bodies/Starfield';
+import { createStarfield, starLook } from '../bodies/Starfield';
 import { config } from '../config';
 import { CameraRig } from '../navigation/CameraRig';
 import { OrbitMode } from '../navigation/OrbitMode';
@@ -20,6 +20,7 @@ import { createDebugGui } from '../ui/DebugGui';
 import { Hud } from '../ui/Hud';
 import { Labels } from '../ui/Labels';
 import { FloatingOrigin } from './FloatingOrigin';
+import { horizon, horizonBackground } from './Horizon';
 import { createRenderer } from './Renderer';
 import { SimClock } from './SimClock';
 import { layoutSystem } from './SystemLayout';
@@ -56,6 +57,7 @@ export class Engine {
     ({ renderer: this.renderer, isWebGLFallback: this.isWebGLFallback } = await createRenderer(canvas));
     ({ pipeline: this.pipeline, bloom: this.bloom } = createPipeline(this.renderer, this.scene, this.rig.camera));
 
+    this.scene.backgroundNode = horizonBackground();
     this.createBodies();
     const earth = this.byId('earth') ?? this.bodies[0];
     // Primer frame: posiciones calculadas antes de colocar la cámara.
@@ -180,6 +182,7 @@ export class Engine {
     this.clock.tick(dt);
     this.scale.update(dt);
     layoutSystem(this.bodies, this.clock.timeMs, this.scale);
+    for (const body of this.bodies) body.orient(this.clock.timeMs);
     this.rig.update(dt);
 
     let pointer: THREE.Vector3 | null = null;
@@ -198,11 +201,22 @@ export class Engine {
       renderer: this.renderer,
       pointer,
       nowSeconds: now / 1000,
+      camera: this.rig.camera,
     };
     for (const body of this.bodies) body.update(ctx);
     this.orbits.update(ctx);
     const sun = this.bodies[0];
     for (const belt of this.belts) belt.update(ctx, sun.sceneD);
+
+    // Fondo a ras de suelo (§7.4): cielo arriba, suelo abajo; de día las estrellas se apagan.
+    const sky = this.orbit.focus.sky;
+    horizon.amount.value = sky.amount;
+    horizon.up.value.copy(sky.up);
+    horizon.dip.value = sky.dip;
+    horizon.sky.value.set(sky.color.r, sky.color.g, sky.color.b);
+    horizon.ground.value.set(sky.ground.r, sky.ground.g, sky.ground.b);
+    const daySky = Math.min(1, (sky.color.r + sky.color.g + sky.color.b) * 2) * sky.amount;
+    starLook.brightness.value = 1 - 0.95 * daySky;
 
     this.pipeline.render();
     this.labels.update(this.rig.camera, window.innerWidth, window.innerHeight, this.orbit.focus);

@@ -61,7 +61,7 @@ const BAND_EDGE = 10;
 
 /** Velocidad angular de la banda (rad/s) a una latitud (rad): bloques alternos, en calma cerca de los polos. */
 function bandOmega(lat: number, preset: GasPreset): number {
-  const polar = THREE.MathUtils.smoothstep(Math.abs(lat), 1.4, 1.05);
+  const polar = 1 - THREE.MathUtils.smoothstep(Math.abs(lat), 1.05, 1.4);
   return Math.tanh(BAND_EDGE * Math.cos(lat * preset.flow.jets * 2)) * polar * preset.flow.speed;
 }
 

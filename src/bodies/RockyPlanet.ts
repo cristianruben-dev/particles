@@ -1,19 +1,24 @@
 /**
- * Planetas rocosos y lunas: albedo + relieve real + iluminación por partícula.
- * Ver docs/ARQUITECTURA.md §6.2 y §8.
+ * Planetas rocosos y lunas: albedo + relieve real + iluminación por partícula, y la
+ * superficie para bajar hasta el suelo. Ver docs/ARQUITECTURA.md §6.2, §7 y §8.
  */
 import * as THREE from 'three/webgpu';
 import { float, max, mix, pow, smoothstep, uniform, vec3, vec4 } from 'three/tsl';
 import type { Node } from 'three/webgpu';
 import type { BodyData } from '../astro/bodies';
+import type { Vec3d } from '../astro/frames';
 import { config } from '../config';
 import { bakeSphere, type BakeTexture } from '../particles/bake';
 import { Disturbance } from '../particles/Disturbance';
 import { ball, ballDepth, ballSprite, frontFacing, hardDisc, viewDirection, worldNormal } from '../particles/nodes';
+import { detailFraction } from '../particles/LodManager';
 import { ParticleField } from '../particles/ParticleField';
+import { Surface } from '../surface/Surface';
+import { TerrainData } from '../surface/TerrainData';
+import { lastFaceOctave, terrainHeightCpu, type TerrainParams } from '../surface/terrain';
 import { Atmosphere } from './Atmosphere';
 import { BaseBody } from './BaseBody';
-import type { CelestialBody } from './CelestialBody';
+import type { CelestialBody, FrameContext } from './CelestialBody';
 import { CloudLayer } from './CloudLayer';
 import { DetailTier, type TierKind } from './DetailTier';
 import type { RockyPreset } from './presets';
@@ -35,14 +40,61 @@ export function previewCount(count: number, mainCount: number): number {
   return Math.max(2000, Math.ceil((count * main) / mainCount));
 }
 
+/** Fracción de detalle del globo con la que entra (y, por debajo de la otra, sale) la superficie. */
+const SURFACE_ENTER = 0.8;
+const SURFACE_EXIT = 0.55;
+
 export class RockyPlanet extends BaseBody {
-  /** Exageración del relieve (ajustable en vivo). */
-  readonly relief = uniform(0);
+  /** Exageración del relieve vista desde la órbita (ajustable en vivo desde el panel). */
+  readonly reliefScale: { value: number };
+  /** Relieve que usa el globo este frame: se modera al bajar hacia el de la superficie. */
+  private readonly relief = uniform(0);
+
+  /** Superficie (§7): datos del terreno mientras el cuerpo está enfocado, y los chunks. */
+  private terrain: TerrainData | null = null;
+  private terrainLoading = false;
+  private surface: Surface | null = null;
+  private globe: ParticleField | null = null;
+  private readonly terrainParams: TerrainParams | null;
+  /** Atenuación de nubes y atmósfera cuando la cámara baja por debajo de ellas. */
+  private readonly cloudFade = uniform(1);
+  private readonly airFade = uniform(1);
+  private readonly terrainLight = uniform(0);
+  private readonly planetCenter = uniform(new THREE.Vector3());
+  private readonly view = new THREE.Vector3();
 
   constructor(data: BodyData, parent: CelestialBody | null, private readonly preset: RockyPreset) {
     super(data, parent);
+    this.reliefScale = { value: preset.reliefScale };
     this.relief.value = preset.reliefScale;
+    this.terrainParams = preset.surface
+      ? {
+          relief: preset.surface.relief,
+          reference: preset.heightReference,
+          waterBelow: preset.waterBelow ?? -1,
+          roughness: preset.surface.roughness,
+          radiusKm: data.radiusKm,
+        }
+      : null;
     this.start();
+  }
+
+  get landable(): boolean {
+    return this.terrainParams !== null;
+  }
+
+  get particleCount(): number {
+    return super.particleCount + (this.surface?.complete ? this.surface.particleCount : 0);
+  }
+
+  /** Altura del suelo que se dibuja (km), para que la cámara no lo atraviese. */
+  groundHeightKm(dir: Vec3d): number {
+    if (!this.terrainParams || !this.terrain) return 0;
+    const local = this.view.set(dir.x, dir.y, dir.z).applyQuaternion(this.spinQuaternion.clone().invert());
+    const radii = this.surface
+      ? this.surface.heightAt(local)
+      : terrainHeightCpu(local.x, local.y, local.z, this.terrain.height, this.terrainParams, lastFaceOctave(0, 80));
+    return radii * this.data.radiusKm;
   }
 
   protected async buildTier(kind: TierKind): Promise<DetailTier> {
@@ -94,17 +146,22 @@ export class RockyPlanet extends BaseBody {
       surf[i * 4 + 1] = night ? night[i] : 0;
     }
 
-    const surface = this.createSurface(tier, baked.directions, color, surf);
-    tier.addField(surface, true);
+    const globe = this.createGlobe(tier, baked.directions, color, surf);
+    tier.addField(globe, true);
     tier.total = count;
+    if (kind === 'full') this.globe = globe;
 
     if (p.atmosphere) {
-      const atmosphere = new Atmosphere(tier, p.atmosphere, layerCount(p.atmosphere.count), this.sunDirection, this.objectScale);
+      const atmosphere = new Atmosphere(
+        tier, p.atmosphere, layerCount(p.atmosphere.count), this.sunDirection, this.objectScale, 1, this.airFade,
+      );
       tier.addField(atmosphere.field, false);
     }
 
     if (p.clouds) {
-      const clouds = await CloudLayer.create(tier, p.clouds, layerCount(p.clouds.count), this.sunDirection, this.objectScale);
+      const clouds = await CloudLayer.create(
+        tier, p.clouds, layerCount(p.clouds.count), this.sunDirection, this.objectScale, this.cloudFade,
+      );
       tier.roots.push({ object: clouds.group, spin: true });
       tier.fields.push({ field: clouds.field, scale: 1 });
       tier.updates.push((ctx) => {
@@ -115,7 +172,7 @@ export class RockyPlanet extends BaseBody {
     return tier;
   }
 
-  private createSurface(tier: DetailTier, directions: Float32Array, color: Float32Array, surf: Float32Array): ParticleField {
+  private createGlobe(tier: DetailTier, directions: Float32Array, color: Float32Array, surf: Float32Array): ParticleField {
     const p = this.preset;
     const count = directions.length / 4;
     const dirBuffer = tier.buffer(directions);
@@ -192,7 +249,142 @@ export class RockyPlanet extends BaseBody {
     material.colorNode = vec4(rgb, 1);
     return field;
   }
+
+  update(ctx: FrameContext): void {
+    super.update(ctx);
+    const p = this.preset;
+    // Altitud de la cámara en radios (sobre el radio medio).
+    const altitude = this.object3d.position.length() / this.sceneRadius - 1;
+    const smooth = THREE.MathUtils.smoothstep;
+
+    // El relieve del globo, muy exagerado para verlo desde la órbita, se modera al bajar
+    // hasta el de la superficie: así no hay salto cuando aparecen los chunks.
+    const ground = p.surface?.relief ?? this.reliefScale.value;
+    this.relief.value = ground + (this.reliefScale.value - ground) * smooth(altitude, 0.1, 0.3);
+    if (p.clouds) this.cloudFade.value = smooth(altitude, p.clouds.altitude * 0.6, p.clouds.altitude * 1.6);
+    if (p.atmosphere) this.airFade.value = smooth(altitude, p.atmosphere.thickness * 0.3, p.atmosphere.thickness * 1.2);
+    this.terrainLight.value = 1 - smooth(altitude, 0.01, 0.08);
+    this.planetCenter.value.copy(this.object3d.position);
+    this.updateSky(altitude);
+
+    this.updateSurface(ctx);
+  }
+
+  /** Carga el terreno al enfocar, y activa o retira la superficie según el detalle del globo. */
+  private updateSurface(ctx: FrameContext): void {
+    const p = this.preset;
+    if (!this.terrainParams) return;
+    if (this.isFocused && !this.terrain && !this.terrainLoading) {
+      this.terrainLoading = true;
+      TerrainData.load({
+        albedo: p.textures.albedo,
+        height: p.surface?.height ?? p.textures.height,
+        heightSize: p.surface?.heightSize,
+        night: p.textures.night,
+        leftLon: p.mapLeftLon,
+      }).then((t) => {
+        this.terrainLoading = false;
+        if (this.isFocused) this.terrain = t;
+        else t.dispose();
+      });
+    }
+
+    const full = this.fullTier;
+    const fraction = full ? detailFraction(full.total, this.radiusPx) : 0;
+    if (!this.surface && this.terrain && this.isFocused && full && full.appear.value >= 1 && fraction >= SURFACE_ENTER) {
+      this.surface = new Surface(this.terrain, this.terrainParams, {
+        tint: new THREE.Color(p.tint ?? 0xffffff).multiplyScalar(p.gain ?? 1),
+        sunDirection: this.sunDirection,
+        objectScale: this.objectScale,
+        planetCenter: this.planetCenter,
+        terrainLight: this.terrainLight,
+        water: p.waterBelow !== undefined,
+      });
+      this.spin.add(this.surface.group);
+    } else if (this.surface && (!this.isFocused || !full || fraction < SURFACE_EXIT)) {
+      this.surface.dispose(ctx.renderer);
+      this.surface = null;
+    }
+    if (!this.isFocused && this.terrain && !this.surface) {
+      this.terrain.dispose();
+      this.terrain = null;
+    }
+
+    if (this.surface) {
+      this.object3d.updateMatrixWorld(true);
+      const cameraLocal = this.spin.worldToLocal(new THREE.Vector3());
+      // Frustum de la cámara: solo los cuatro planos laterales (cerca y lejos no importan).
+      const camera = ctx.camera;
+      frustumMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+      frustum.setFromProjectionMatrix(frustumMatrix, camera.coordinateSystem);
+      frustum.planes[4].set(new THREE.Vector3(1, 0, 0), 1e30);
+      frustum.planes[5].set(new THREE.Vector3(1, 0, 0), 1e30);
+      const sphere = new THREE.Sphere();
+      this.surface.update(ctx.renderer, {
+        cameraLocal,
+        dt: ctx.dt,
+        inFrustum: (center, radius) => {
+          sphere.center.copy(center);
+          this.spin.localToWorld(sphere.center);
+          sphere.radius = radius * this.sceneRadius * 1.05;
+          return frustum.intersectsSphere(sphere);
+        },
+      });
+    }
+    // Con la superficie completa, el globo sobra (sus puntos son de decenas de km).
+    if (this.globe) this.globe.object.visible = !this.surface?.complete;
+  }
+
+  /**
+   * Fondo a ras de suelo (§7.4): cielo con el color de la atmósfera de día y, bajo el
+   * horizonte, un tono oscuro del suelo que hay debajo (se ve entre las partículas).
+   */
+  private updateSky(altitude: number): void {
+    const sky = this.sky;
+    sky.amount = 0;
+    if (!this.isFocused || !this.landable) return;
+    const smooth = THREE.MathUtils.smoothstep;
+    sky.amount = 1 - smooth(altitude, 0.02, 0.08);
+    if (sky.amount <= 0) return;
+    const up = sky.up.copy(this.object3d.position).negate().normalize();
+    const d = Math.max(1, altitude + 1);
+    sky.dip = -Math.sqrt(1 - 1 / (d * d));
+    const sunHeight = up.dot(this.sunDirection.value);
+    const day = smooth(sunHeight, -0.15, 0.25);
+
+    // Suelo: el albedo bajo la cámara, oscurecido.
+    const ground = this.groundColor(up);
+    sky.ground.copy(ground).multiplyScalar(0.05 + 0.3 * day);
+    const air = this.preset.atmosphere;
+    if (air) {
+      const thick = 1 - smooth(altitude, air.thickness * 0.15, air.thickness * 1.2);
+      sky.color.set(air.twilightColor).lerp(new THREE.Color(air.dayColor), smooth(sunHeight, 0, 0.35))
+        .multiplyScalar(0.55 * day * thick * Math.min(1, air.strength));
+    } else {
+      sky.color.setRGB(0, 0, 0);
+    }
+  }
+
+  /** Albedo (lineal, con tinte) del terreno bajo una dirección de mundo. */
+  private groundColor(upWorld: THREE.Vector3): THREE.Color {
+    const out = new THREE.Color(this.data.color);
+    const tex = this.terrain?.albedo;
+    if (!tex) return out;
+    const local = this.view.copy(upWorld).applyQuaternion(this.spinQuaternion.clone().invert());
+    const lon = Math.atan2(-local.z, local.x), lat = Math.atan2(local.y, Math.hypot(local.x, local.z));
+    const { width, height, data } = tex.image as { width: number; height: number; data: Uint8Array };
+    const u = 0.5 + lon / (2 * Math.PI) + (-180 - (this.preset.mapLeftLon ?? -180)) / 360;
+    const x = ((Math.floor(u * width) % width) + width) % width;
+    const y = Math.min(height - 1, Math.max(0, Math.floor((0.5 - lat / Math.PI) * height)));
+    const i = (y * width + x) * 4;
+    out.setRGB(data[i] / 255, data[i + 1] / 255, data[i + 2] / 255, THREE.SRGBColorSpace);
+    return out.multiply(new THREE.Color(this.preset.tint ?? 0xffffff)).multiplyScalar(this.preset.gain ?? 1);
+  }
+
 }
+
+const frustum = new THREE.Frustum();
+const frustumMatrix = new THREE.Matrix4();
 
 export function hashString(s: string): number {
   let h = 2166136261;

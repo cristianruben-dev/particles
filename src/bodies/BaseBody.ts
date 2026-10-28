@@ -7,7 +7,7 @@ import * as THREE from 'three/webgpu';
 import { cameraPosition, float, modelWorldMatrixInverse, uniform, vec3, vec4 } from 'three/tsl';
 import type { BodyData } from '../astro/bodies';
 import { spinAngle } from '../astro/ephemeris';
-import { eclToScene, vec3d } from '../astro/frames';
+import { eclToScene, vec3d, type Vec3d } from '../astro/frames';
 import { bodyFrame, cross3d } from '../astro/orientation';
 import { config } from '../config';
 import { disturbanceLook, type LocalRay } from '../particles/Disturbance';
@@ -76,7 +76,7 @@ export abstract class BaseBody implements CelestialBody {
   get particleCount(): number {
     let n = 0;
     for (const tier of [this.preview, this.full]) {
-      if (tier && tier.roots[0]?.object.visible) n += tier.fields.reduce((s, f) => s + f.field.object.count, 0);
+      if (tier?.visible) n += tier.fields.reduce((s, f) => s + (f.field.object.visible ? f.field.object.count : 0), 0);
     }
     return n;
   }
@@ -84,6 +84,43 @@ export abstract class BaseBody implements CelestialBody {
   setFocused(focused: boolean): void {
     this.focused = focused;
   }
+
+  protected get isFocused(): boolean {
+    return this.focused;
+  }
+
+  /** Nivel completo, si está cargado. */
+  protected get fullTier(): DetailTier | null {
+    return this.full;
+  }
+
+  /** ¿Se puede bajar hasta el suelo? Solo los rocosos con superficie (§7). */
+  get landable(): boolean {
+    return false;
+  }
+
+  /** Altura del suelo (km) bajo una dirección de escena. Sin superficie, el radio medio. */
+  groundHeightKm(_dir: Vec3d): number {
+    return 0;
+  }
+
+  private readonly spinQ = new THREE.Quaternion();
+  /** Orientación del grupo que gira (cuerpo × giro propio), en ejes de escena. */
+  get spinQuaternion(): THREE.Quaternion {
+    return this.spinQ.copy(this.object3d.quaternion).multiply(this.spin.quaternion);
+  }
+
+  /**
+   * Fondo visto desde la cámara: cielo (cuerpos con atmósfera, de día) y suelo bajo el
+   * horizonte. `amount` = 0 en el espacio.
+   */
+  readonly sky = {
+    color: new THREE.Color(0, 0, 0),
+    ground: new THREE.Color(0, 0, 0),
+    up: new THREE.Vector3(0, 1, 0),
+    dip: -1,
+    amount: 0,
+  };
 
   private async loadTier(kind: TierKind): Promise<void> {
     const tier = await this.buildTier(kind);
@@ -105,7 +142,6 @@ export abstract class BaseBody implements CelestialBody {
     this.objectScale.value = this.sceneRadius;
     ctx.origin.place(this.object3d, this.sceneD);
     this.orient(ctx.timeMs);
-    this.spin.rotation.y = this.rotationAngle(ctx.timeMs);
 
     const toSun = eclToScene({ x: -this.positionKm.x, y: -this.positionKm.y, z: -this.positionKm.z });
     this.sunDirection.value.set(toSun.x, toSun.y, toSun.z).normalize();
@@ -137,7 +173,7 @@ export abstract class BaseBody implements CelestialBody {
     }
 
     for (const tier of [this.preview, this.full]) {
-      if (!tier || !tier.roots[0]?.object.visible) continue;
+      if (!tier?.visible) continue;
       const fraction = detailFraction(tier.total, this.radiusPx);
       for (const { field, scale } of tier.fields) field.setVisibleFraction(Math.min(1, fraction * scale));
       for (const u of tier.updates) u(ctx);
@@ -152,13 +188,17 @@ export abstract class BaseBody implements CelestialBody {
     this.preview?.setVisible(true);
   }
 
-  /** Polo y nodo IAU de la fecha → orientación del cuerpo en ejes de escena. */
-  private orient(timeMs: number): void {
+  /** Polo y nodo IAU de la fecha → orientación del cuerpo en ejes de escena, y giro propio. */
+  orient(timeMs: number): void {
+    if (timeMs === this.orientedAt) return;
+    this.orientedAt = timeMs;
     const f = bodyFrame(this.data.pole, timeMs);
     const x = eclToScene(f.node), y = eclToScene(f.pole), z = cross3d(x, y);
     basis.set(x.x, y.x, z.x, 0, x.y, y.y, z.y, 0, x.z, y.z, z.z, 0, 0, 0, 0, 1);
     this.object3d.quaternion.setFromRotationMatrix(basis);
+    this.spin.rotation.y = this.rotationAngle(timeMs);
   }
+  private orientedAt = NaN;
 
   /**
    * Rayo del cursor en el espacio local de `space` (una capa de partículas del cuerpo),

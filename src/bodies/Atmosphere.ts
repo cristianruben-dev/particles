@@ -34,6 +34,8 @@ export class Atmosphere {
     objectScale: FloatNode,
     /** Escala vertical (1 − achatamiento) para los gigantes gaseosos. */
     flatten = 1,
+    /** 1 = normal, 0 = invisible (la cámara está dentro de la capa). */
+    fade: FloatNode = float(1),
   ) {
     this.field = new ParticleField(count, 'additive', 3);
     const dirAttr = tier.buffer(shellPoints(count)).toAttribute();
@@ -65,7 +67,8 @@ export class Atmosphere {
       .mul(day)
       .mul(float(1).sub(h))
       .mul(preset.strength)
-      .mul(tier.appear);
+      .mul(tier.appear)
+      .mul(fade);
 
     material.colorNode = vec4(tint.mul(intensity), 1);
     material.opacityNode = softDisc();

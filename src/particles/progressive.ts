@@ -112,3 +112,50 @@ export function stratifiedOrder(points: Float32Array, count: number, random: () 
   }
   return order;
 }
+
+/**
+ * Tesela de ruido azul progresivo de `count` puntos en [0, 1)² con distancias toroidales
+ * (se repite sin costuras). Algoritmo del mejor candidato de Mitchell: cada punto nuevo es,
+ * de `candidates` al azar, el más alejado de los anteriores. Cualquier prefijo es también
+ * ruido azul (sin filas como una rejilla o R2, sin grumos como el azar). Ver §7.3.
+ */
+export function blueNoiseTile(count: number, candidates: number, random: () => number): Float32Array {
+  const out = new Float32Array(count * 2);
+  // Rejilla de aceleración: celdas de tamaño ~ la separación final.
+  const res = Math.max(1, Math.floor(Math.sqrt(count)));
+  const cells: number[][] = Array.from({ length: res * res }, () => []);
+  const nearest = (x: number, y: number, n: number): number => {
+    if (n === 0) return Infinity;
+    const cx = Math.floor(x * res), cy = Math.floor(y * res);
+    let best = Infinity;
+    // Busca en anillos crecientes hasta que el anillo ya no puede mejorar.
+    for (let r = 0; r <= res; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const cell = cells[((cy + dy + res) % res) * res + ((cx + dx + res) % res)];
+          for (const i of cell) {
+            let ddx = Math.abs(out[i * 2] - x), ddy = Math.abs(out[i * 2 + 1] - y);
+            if (ddx > 0.5) ddx = 1 - ddx;
+            if (ddy > 0.5) ddy = 1 - ddy;
+            best = Math.min(best, ddx * ddx + ddy * ddy);
+          }
+        }
+      }
+      if (best < Infinity && (r / res) ** 2 > best) break;
+    }
+    return best;
+  };
+  for (let n = 0; n < count; n++) {
+    let bx = 0, by = 0, bd = -1;
+    for (let c = 0; c < candidates; c++) {
+      const x = random(), y = random();
+      const d = nearest(x, y, n);
+      if (d > bd) { bd = d; bx = x; by = y; }
+    }
+    out[n * 2] = bx;
+    out[n * 2 + 1] = by;
+    cells[Math.min(res - 1, Math.floor(by * res)) * res + Math.min(res - 1, Math.floor(bx * res))].push(n);
+  }
+  return out;
+}

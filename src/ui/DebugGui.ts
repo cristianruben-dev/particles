@@ -62,7 +62,7 @@ export function createDebugGui({ renderer, bloom, bodies }: DebugTargets): GUI {
 
   const relief = gui.addFolder('Relieve');
   for (const body of bodies) {
-    if (body instanceof RockyPlanet) relief.add(body.relief, 'value', 0, 0.15, 0.001).name(body.data.name);
+    if (body instanceof RockyPlanet) relief.add(body.reliefScale, 'value', 0, 0.15, 0.001).name(body.data.name);
   }
 
   const scale = gui.addFolder('Escala comprimida');

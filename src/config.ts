@@ -27,10 +27,11 @@ export const config = {
     previewCount: 40_000,
   },
 
-  /** Partículas por lado de un chunk de superficie (N×N). */
-  surfaceChunkResolution: 128,
-  /** Profundidad máxima del quadtree de superficie. */
-  surfaceMaxDepth: 15,
+  /**
+   * Profundidad máxima del quadtree de superficie. Con chunks de 80×80, 23 niveles dan
+   * partículas a ~1,5 cm en la Tierra: unos 2,6 px vistos desde 10 m.
+   */
+  surfaceMaxDepth: 23,
 
   /** Límite de densidad de píxeles. Por debajo de la nativa la imagen se reescala y se ve borrosa. */
   maxPixelRatio: 2,

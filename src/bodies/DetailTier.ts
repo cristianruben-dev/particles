@@ -53,7 +53,11 @@ export class DetailTier {
     if (lodScale > 0) this.fields.push({ field, scale: lodScale });
   }
 
+  /** Visible el nivel entero (una capa puede ocultarse aparte, como el globo bajo la superficie). */
+  visible = true;
+
   setVisible(visible: boolean): void {
+    this.visible = visible;
     for (const r of this.roots) r.object.visible = visible;
   }
 

@@ -46,6 +46,22 @@ export interface RockyPreset {
     altitude: number;
   };
   atmosphere?: AtmospherePreset;
+  /** Se puede bajar hasta el suelo (§7). */
+  surface?: SurfacePreset;
+}
+
+export interface SurfacePreset {
+  /**
+   * Relieve a ras de suelo (radios por unidad de altura normalizada). Menos exagerado que
+   * `reliefScale` (pensado para verlo desde la órbita): al bajar, el relieve del globo se
+   * modera hasta este valor antes de que aparezcan los chunks.
+   */
+  relief: number;
+  /** Rugosidad del detalle procedural (amplitud / longitud de onda). */
+  roughness: number;
+  /** Mapa de alturas de más resolución para la superficie (si no, `textures.height`). */
+  height?: string;
+  heightSize?: { width: number; height: number };
 }
 
 const tex = (body: string, file: string) => `/textures/${body}/${file}`;
@@ -57,6 +73,7 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     tint: 0xd8cfc4,
     heightReference: 0.5,
     reliefScale: 0.025,
+    surface: { relief: 0.008, roughness: 0.04 },
   },
   venus: {
     // Solo se ven las nubes: la superficie (radar de Magellan) no es visible.
@@ -80,12 +97,14 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     waterBelow: 0.5 / 255,
     clouds: { count: 320_000, texture: tex('earth', 'clouds_2k.jpg'), altitude: 0.022 },
     atmosphere: { count: 140_000, thickness: 0.04, dayColor: 0x94c4ff, twilightColor: 0xffad75, strength: 1 },
+    surface: { relief: 0.0045, roughness: 0.03 },
   },
   moon: {
     count: 400_000,
     textures: { albedo: tex('moon', 'albedo_2k.jpg'), height: tex('moon', 'height_1k.jpg') },
     heightReference: 0.5,
     reliefScale: 0.04,
+    surface: { relief: 0.02, roughness: 0.045 },
   },
   mars: {
     count: 800_000,
@@ -94,12 +113,14 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     heightReference: 0.28,
     reliefScale: 0.035,
     atmosphere: { count: 60_000, thickness: 0.025, dayColor: 0xf3c9a0, twilightColor: 0x6f9bd8, strength: 0.45 },
+    surface: { relief: 0.015, roughness: 0.035 },
   },
   io: {
     count: 300_000,
     textures: { albedo: tex('io', 'albedo_2k.jpg') },
     heightReference: 0,
     reliefScale: 0,
+    surface: { relief: 0, roughness: 0.03 },
   },
   europa: {
     count: 300_000,
@@ -108,6 +129,7 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     gain: 0.75,
     heightReference: 0,
     reliefScale: 0,
+    surface: { relief: 0, roughness: 0.02 },
   },
   ganymede: {
     count: 300_000,
@@ -115,6 +137,7 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     mapLeftLon: 0,
     heightReference: 0,
     reliefScale: 0,
+    surface: { relief: 0, roughness: 0.035 },
   },
   callisto: {
     count: 300_000,
@@ -123,6 +146,7 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     tint: 0xb39d84,
     heightReference: 0,
     reliefScale: 0,
+    surface: { relief: 0, roughness: 0.04 },
   },
   titan: {
     // Una bruma naranja espesa tapa la superficie: se intuye debajo.
@@ -133,12 +157,14 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     heightReference: 0,
     reliefScale: 0,
     atmosphere: { count: 120_000, thickness: 0.12, dayColor: 0xffa24a, twilightColor: 0x9a5a22, strength: 2 },
+    surface: { relief: 0, roughness: 0.025 },
   },
   triton: {
     count: 250_000,
     textures: { albedo: tex('triton', 'albedo_2k.jpg') },
     heightReference: 0,
     reliefScale: 0,
+    surface: { relief: 0, roughness: 0.03 },
   },
   pluto: {
     count: 300_000,
@@ -147,6 +173,7 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     heightReference: 0,
     reliefScale: 0,
     atmosphere: { count: 30_000, thickness: 0.03, dayColor: 0x7fa6ff, twilightColor: 0x7fa6ff, strength: 0.35 },
+    surface: { relief: 0, roughness: 0.03 },
   },
   charon: {
     count: 150_000,
@@ -154,6 +181,7 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     tint: 0xc9b8a8,
     heightReference: 0,
     reliefScale: 0,
+    surface: { relief: 0, roughness: 0.035 },
   },
 };
 

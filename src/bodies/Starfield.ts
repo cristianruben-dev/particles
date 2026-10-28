@@ -4,7 +4,8 @@
  * Las estrellas están "en el infinito": el objeto queda fijo en el origen de la escena,
  * que siempre es la cámara, así que solo les afecta la rotación.
  */
-import { uniform, vec4 } from 'three/tsl';
+import { float, mix, uniform, vec4 } from 'three/tsl';
+import { aboveHorizon, horizon } from '../core/Horizon';
 import { eclToScene, equatorialToEcliptic, raDecToVector } from '../astro/frames';
 import { pixelAngle, softDisc } from '../particles/nodes';
 import { ParticleField, vec4Buffer } from '../particles/ParticleField';
@@ -52,7 +53,9 @@ export async function createStarfield(url = '/data/stars.bin'): Promise<Particle
   material.sizeAttenuation = false;
   material.positionNode = posAttr.xyz;
   material.scaleNode = posAttr.w.mul(pixelAngle);
-  material.colorNode = vec4(colorAttr.xyz.mul(starLook.brightness), 1);
+  // A ras de suelo, sin estrellas bajo el horizonte (se verían entre las partículas del terreno).
+  const visible = mix(float(1), aboveHorizon(posAttr.xyz.normalize()), horizon.amount.greaterThan(0).select(1, 0));
+  material.colorNode = vec4(colorAttr.xyz.mul(starLook.brightness).mul(visible), 1);
   material.opacityNode = softDisc();
 
   field.object.renderOrder = -1;

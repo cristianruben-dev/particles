@@ -1,22 +1,40 @@
 /**
- * Un parche de superficie con N×N partículas generadas en GPU. Ver docs/ARQUITECTURA.md §7.2.
+ * Un parche de superficie: N×N partículas en un hueco del pool. Ver docs/ARQUITECTURA.md §7.2.
+ *
+ * El sprite cuelga del grupo que gira con el cuerpo y se coloca en el centro del chunk
+ * (posición calculada en float64): las partículas guardan su desplazamiento respecto a él
+ * y conservan la precisión aunque midan centímetros.
  */
+import * as THREE from 'three/webgpu';
 import type { QuadNode } from './CubeSphereQuadtree';
 
 export class SurfaceChunk {
-  node: QuadNode | null = null;
+  readonly object: THREE.Sprite;
+  /** 0 → 1 al aparecer; 1 → 0 al retirarse (el padre se funde mientras llegan los hijos). */
+  appear = 0;
+  retiring = false;
 
-  // TODO(fase 3): compute que, para el nodo asignado:
-  //   1. genera rejilla N×N con jitter en la cara y proyecta con cubeToSphere
-  //   2. altura = heightmap real + fBm procedural escalado al tamaño del chunk
-  //   3. color = albedo + variación por pendiente/altura
-  //   4. guarda posiciones relativas al centro del chunk (precisión, §4.2)
-
-  assign(node: QuadNode): void {
-    this.node = node;
+  constructor(
+    readonly node: QuadNode,
+    readonly slot: number,
+    material: THREE.SpriteNodeMaterial,
+    private readonly particles: number,
+    /** Separación entre partículas con el chunk completo (radios). */
+    spacing: number,
+  ) {
+    this.object = new THREE.Sprite(material);
+    this.object.count = particles;
+    this.object.frustumCulled = false;
+    this.object.userData = { slotBase: slot * particles, spacing, appear: 0 };
   }
 
-  release(): void {
-    this.node = null;
+  /** Dibuja como mucho una fracción (prefijo) de las partículas; el shader decide cuáles. */
+  setDensity(fraction: number): void {
+    this.object.count = Math.max(64, Math.ceil(this.particles * fraction));
+  }
+
+  setAppear(value: number): void {
+    this.appear = value;
+    this.object.userData.appear = value;
   }
 }

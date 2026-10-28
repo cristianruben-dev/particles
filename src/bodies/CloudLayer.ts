@@ -39,6 +39,8 @@ export class CloudLayer {
     count: number,
     sunDirection: Vec3Node,
     objectScale: FloatNode,
+    /** 1 = normal, 0 = invisible (la cámara ha bajado por debajo de la capa). */
+    fade: FloatNode = float(1),
   ): Promise<CloudLayer> {
     const baked = await bakeSphere({
       count,
@@ -91,7 +93,7 @@ export class CloudLayer {
     const lit = shaped.mul(0.75).add(0.25).mul(daylight).add(0.01);
     material.colorNode = vec4(vec3(0.97, 0.98, 1.0).mul(lit), 1);
     const puff = smoothstep(1, 0.55, b.r2);
-    material.opacityNode = puff.mul(smoothstep(0.15, 0.95, densityAttr.x)).mul(cloudLook.opacity).mul(appear);
+    material.opacityNode = puff.mul(smoothstep(0.15, 0.95, densityAttr.x)).mul(cloudLook.opacity).mul(appear).mul(fade);
 
     return layer;
   }
