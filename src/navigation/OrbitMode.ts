@@ -35,6 +35,13 @@ const BODY_FRAME_EXIT = 0.15;
 const TILT_START = 0.05;
 const TILT_END = 3e-6;
 const MAX_TILT = 1.45;
+/**
+ * Mirada más alta a ras de suelo (rad desde la vertical hacia abajo): ~68° sobre el horizonte,
+ * para ver las constelaciones (§15.3). Arrastrar con el botón derecho llega hasta ahí.
+ */
+const MAX_LOOK_TILT = 2.75;
+/** Tope del ajuste de inclinación: a media altura (`groundLook` < 1) hace falta más para llegar. */
+const MAX_PITCH = MAX_LOOK_TILT;
 /** Aterrizaje con el botón: altitud final (en radios), mirada inclinada hacia el horizonte y duración. */
 const LAND_ALTITUDE_RADII = 1.5e-3;
 const LAND_PITCH = 0.85;
@@ -198,6 +205,68 @@ export class OrbitMode implements NavigationMode {
     };
   }
 
+  /** 0 en órbita, 1 a ras de suelo: cuánto se inclina la mirada hacia el horizonte. */
+  private get groundLook(): number {
+    const ratio = Math.max(this.altitude / this.focus.data.radiusKm, 1e-12);
+    return 1 - THREE.MathUtils.smoothstep(Math.log(ratio), Math.log(TILT_END), Math.log(TILT_START));
+  }
+
+  /**
+   * Gira la vista hacia una dirección del cielo (unitaria, ejes de escena) sin cambiar la
+   * altitud (§15.3). En órbita, la cámara rodea el cuerpo, que sigue en el centro, hasta dejar
+   * esa dirección a su lado y dentro de la pantalla; a ras de suelo gira la mirada.
+   * @param fovDeg campo de visión vertical; `aspect`, ancho / alto.
+   * @returns 'below' si a ras de suelo queda bajo el horizonte; 'busy' durante un viaje.
+   */
+  lookToward(target: Dir, fovDeg: number, aspect: number): 'ok' | 'below' | 'busy' {
+    if (this.transition) return 'busy';
+    this.descent = null;
+    const dir = this.toScene(fromAngles(this.azimuth, this.elevation));
+    const t = this.groundLook;
+    if (this.frame === 'body' && t > 0.05) {
+      // Rumbo e inclinación de la mirada, con la misma base que `update`.
+      const height = dot(target, dir);
+      if (height < Math.sin(-DEG)) return 'below';
+      const tangent = tangentTo(dir, sub(this.toScene(fromAngles(this.azimuth, this.elevation + 1e-3)), dir));
+      const side = cross(dir, tangent);
+      // El giro que se ve es rumbo × t: el camino corto se busca en ese ángulo.
+      const angle = Math.atan2(dot(target, side), dot(target, tangent));
+      const current = this.heading * t;
+      this.targetHeading = (current + Math.atan2(Math.sin(angle - current), Math.cos(angle - current))) / t;
+      const tilt = Math.PI / 2 + Math.asin(Math.min(1, height));
+      this.targetPitch = Math.max(-1.2, Math.min(MAX_PITCH, (tilt - t * MAX_TILT) / Math.min(1, t * 4)));
+      return 'ok';
+    }
+    // En órbita la mirada es −dir: la dirección queda a un ángulo α del centro, hacia donde
+    // se mira ahora (el giro más corto), fuera del disco del cuerpo y dentro de la pantalla.
+    const view = { x: -dir.x, y: -dir.y, z: -dir.z };
+    let side = tangentTo(target, view);
+    if (!Number.isFinite(side.x) || Math.abs(dot(target, view)) > 0.9999) side = tangentTo(target, { x: 0, y: 1, z: 0 });
+    const r = this.focus.data.radiusKm;
+    const disc = Math.asin(Math.min(1, r / (r + this.altitude)));
+    // Medio campo de visión en la dirección de `side` en pantalla (arriba ≈ el norte de la eclíptica).
+    const tanV = Math.tan((fovDeg * DEG) / 2), tanH = tanV * aspect;
+    const vertical = Math.abs(dot(side, tangentTo(target, { x: 0, y: 1, z: 0 })));
+    const halfFov = Math.atan(Math.min(tanV / Math.max(vertical, 1e-6), tanH / Math.max(Math.sqrt(1 - vertical * vertical), 1e-6)));
+    const alpha = Math.max(0, Math.min(disc + 12 * DEG, halfFov - 7 * DEG));
+    const ca = Math.cos(alpha), sa = Math.sin(alpha);
+    const look = normalize({ x: target.x * ca + side.x * sa, y: target.y * ca + side.y * sa, z: target.z * ca + side.z * sa });
+    const toDir = { x: -look.x, y: -look.y, z: -look.z };
+    // Como `zoomTo` con la misma altitud, pero con la duración según el giro.
+    const turn = Math.acos(Math.max(-1, Math.min(1, dot(dir, toDir))));
+    this.descent = {
+      t: 0,
+      duration: 2.2 + (1.6 * turn) / Math.PI,
+      fromAltitude: this.altitude,
+      toAltitude: this.altitude,
+      fromDir: fromAngles(this.azimuth, this.elevation),
+      toDir: this.fromScene(toDir),
+      fromPitch: this.pitch,
+      toPitch: this.pitch,
+    };
+    return 'ok';
+  }
+
   /**
    * Baja hasta el suelo con una mirada inclinada hacia el horizonte. Con lugar (latitud y
    * longitud planetocéntricas, este positivo), la cámara se desplaza hasta encima de él.
@@ -342,7 +411,7 @@ export class OrbitMode implements NavigationMode {
       if (this.dragDistance > 4) this.descent = null;
       if (this.dragging === 2) {
         this.targetHeading -= dx * 0.004;
-        this.targetPitch = Math.max(-1.2, Math.min(1, this.targetPitch - dy * 0.004));
+        this.targetPitch = Math.max(-1.2, Math.min(MAX_PITCH, this.targetPitch - dy * 0.004));
         return;
       }
       // Más lento cuanto más cerca del suelo: a 10 m, unos centímetros por píxel.
@@ -465,9 +534,8 @@ export class OrbitMode implements NavigationMode {
       return;
     }
     // A ras de suelo, la mirada se inclina hacia el horizonte (con el rumbo elegido).
-    const ratio = Math.max(this.altitude / r, 1e-12);
-    const t = 1 - THREE.MathUtils.smoothstep(Math.log(ratio), Math.log(TILT_END), Math.log(TILT_START));
-    const tilt = Math.max(0, Math.min(1.55, t * MAX_TILT + this.pitch * Math.min(1, t * 4)));
+    const t = this.groundLook;
+    const tilt = Math.max(0, Math.min(MAX_LOOK_TILT, t * MAX_TILT + this.pitch * Math.min(1, t * 4)));
     // Tangente hacia el "norte" del marco (más elevación), girada por el rumbo.
     const north = this.toScene(fromAngles(azimuth, elevation + 1e-3));
     const tn = sub(north, dir), along = dot(tn, dir);

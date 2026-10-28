@@ -40,6 +40,7 @@ import { horizon, horizonBackground } from './Horizon';
 import { FrameStats, Quality, detectDevice, type QualityProfile } from './Quality';
 import { createRenderer } from './Renderer';
 import { SimClock } from './SimClock';
+import { SkyController } from './SkyController';
 import { layoutSystem } from './SystemLayout';
 
 const formatHours = (h: number) => (h >= 48 ? `${Math.round(h / 24)} días` : `${Math.round(h)} h`);
@@ -107,6 +108,8 @@ export class Engine {
   private orbits!: OrbitLines;
   private readonly belts: AsteroidBelt[] = [];
   private stars: ParticleField | null = null;
+  /** Constelaciones (§15): un clic en su nombre abre la ficha. */
+  private readonly sky = new SkyController(this.scene, (i) => this.showConstellation(i));
   private resolveStars!: () => void;
   /** Se resuelve con las estrellas ya en la escena (o si no se pudieron cargar). */
   readonly starsReady = new Promise<void>((resolve) => (this.resolveStars = resolve));
@@ -114,6 +117,8 @@ export class Engine {
   /** Cursor sobre el canvas en coordenadas normalizadas, o null si está fuera. */
   private pointerNdc: THREE.Vector2 | null = null;
   private readonly pointerRaycaster = new THREE.Raycaster();
+  /** Botones del ratón pulsados sobre el canvas (arrastrando, el cielo no se resalta). */
+  private pointerButtons = 0;
   /** Sonido ambiente (§13): activado salvo que se apagara en otra visita. */
   private sound!: Soundscape;
 
@@ -143,6 +148,7 @@ export class Engine {
     const pick = (x: number, y: number) => {
       const hit = this.solar >= 0.5 ? pickBody(x, y, this.rig.camera, this.bodies, canvas.clientHeight) : null;
       if (hit) this.focus(hit);
+      else this.pickSky(x, y);
     };
     this.orbit = new OrbitMode(earth, canvas, pick);
     this.orbit.faceDaySide();
@@ -170,6 +176,7 @@ export class Engine {
         { id: 'meter', label: 'Medidor de rendimiento', get: () => !hudEl.classList.contains('no-perf'), set: (on) => this.setPref('meter', on, () => hudEl.classList.toggle('no-perf', !on)) },
         { id: 'mouse', label: 'Las partículas reaccionan al ratón', get: () => disturbanceLook.strength.value > 0, set: (on) => this.setPref('mouse', on, () => (disturbanceLook.strength.value = on ? mouseStrength : 0)) },
         { id: 'labels', label: 'Nombres de los cuerpos', key: 'L', get: () => this.labels.visible, set: (on) => (this.labels.visible = on) },
+        ...this.sky.toggles.slice(0, 2),
         { id: 'orbits', label: 'Órbitas', key: 'O', get: () => this.orbits.visible, set: (on) => (this.orbits.visible = on) },
         { id: 'sound', label: 'Sonido ambiente', key: 'M', get: () => this.sound.enabled, set: (on) => this.setSound(on) },
       ],
@@ -179,6 +186,16 @@ export class Engine {
         perihelia: (from, direction) => this.perihelia(from, direction),
         onGo: (e, ground) => this.goToEvent(e, ground),
         onGoComet: (e) => this.goToPerihelion(e),
+      },
+      sky: {
+        toggles: this.sky.toggles,
+        altitude: (i) => this.sky.altitude(i, this.reference.sky),
+        // Elegida en la lista: se resalta y la cámara gira hacia ella.
+        onSelect: (i) => {
+          this.sky.selected = i;
+          if (i >= 0) this.lookAtConstellation(i);
+        },
+        onLook: (i) => this.lookAtConstellation(i),
       },
       onSlower: () => this.clock.slower(),
       onFaster: () => this.clock.faster(),
@@ -231,6 +248,7 @@ export class Engine {
       this.stars = stars;
       this.scene.add(stars.object);
     }).finally(() => this.resolveStars());
+    this.sky.load(hudEl).then((data) => this.hud.sky.setData(data)).catch((e) => console.warn('Sin constelaciones:', e));
 
     this.onResize();
     window.addEventListener('resize', this.onResize);
@@ -427,6 +445,35 @@ export class Engine {
     return (t - start) / 3600e3;
   }
 
+  /** Clic en el cielo vacío (coordenadas normalizadas): la ficha de la constelación de debajo. */
+  private pickSky(x: number, y: number): void {
+    if (!this.sky.interactive || this.solar < 0.5) return;
+    this.pointerRaycaster.setFromCamera(new THREE.Vector2(x, y), this.rig.camera);
+    const i = this.sky.at(this.pointerRaycaster.ray.direction);
+    if (i >= 0) this.showConstellation(i);
+  }
+
+  /** Resalta una constelación y abre su ficha. */
+  private showConstellation(i: number): void {
+    this.sky.selected = i;
+    this.hud.showConstellation(i, this.clock.timeMs);
+  }
+
+  /** Gira la cámara hacia una constelación sin cambiar de cuerpo ni de altitud (§15.3). */
+  private lookAtConstellation(i: number): void {
+    const c = this.sky.data?.constellations[i];
+    if (!c) return;
+    this.sky.selected = i;
+    if (this.cameraSunKm > STARS_FADE_START_KM) {
+      this.hud.toasts.show('Las constelaciones solo se ven desde cerca del Sol', 'constellation', 3);
+      return;
+    }
+    if (this.flying) this.exitFly();
+    const result = this.orbit.lookToward(this.sky.direction(i), this.rig.camera.fov, this.rig.camera.aspect);
+    if (result === 'below') this.hud.toasts.show(`${c.name} está ahora bajo el horizonte`, 'constellation', 3.2);
+    this.hud.coach.dismiss();
+  }
+
   toggleFly(): void {
     if (this.flying) this.exitFly();
     else if (this.cameraSunKm > HANDOFF_START_KM) this.hud.toasts.show('El vuelo libre es dentro del sistema solar', 'fly', 3.5);
@@ -539,6 +586,7 @@ export class Engine {
       if (e.buttons && (dragged += Math.abs(e.movementX) + Math.abs(e.movementY)) > 120) this.hud.coach.dismiss();
     });
     canvas.addEventListener('pointermove', (e) => {
+      this.pointerButtons = e.buttons;
       const rect = canvas.getBoundingClientRect();
       this.pointerNdc ??= new THREE.Vector2();
       this.pointerNdc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
@@ -577,6 +625,8 @@ export class Engine {
       else if (key === 'v') this.toggleFly();
       else if (key === 'g') this.toggleGalaxy();
       else if (key === 'm') this.setSound(!this.sound.enabled, true);
+      else if (key === 'k') this.sky.toggle('figures');
+      else if (key === 'b') this.sky.toggle('borders');
       else return;
       e.preventDefault();
     });
@@ -653,6 +703,10 @@ export class Engine {
     if (this.stars) this.stars.object.visible = galaxy < 1;
     cosmicLook.sky.value = 1 - 0.95 * daySky;
     this.cosmic.update(this.cameraKm, this.solar, galaxy);
+    // El cielo bajo el cursor: no arrastrando, en vuelo libre ni con un cuerpo debajo.
+    const overBody = this.pointerNdc && this.solar >= 0.5 && pickBody(this.pointerNdc.x, this.pointerNdc.y, this.rig.camera, this.bodies, window.innerHeight);
+    this.sky.setPointer(pointer && !this.pointerButtons && !this.flying && !overBody ? pointer : null);
+    this.sky.update({ dt, camera: this.rig.camera, width: window.innerWidth, height: window.innerHeight, brightness: starLook.brightness.value, visible: galaxy < 1, sky, bodies: this.bodies });
 
     this.pipeline.render();
     this.labels.suppressed = this.solar < 0.5;
@@ -675,6 +729,8 @@ export class Engine {
       sunDistanceKm: Math.hypot(focus.positionKm.x, focus.positionKm.y, focus.positionKm.z),
       earthDistanceKm: earth ? km(focus.positionKm, earth.positionKm) : 0,
       cameraDistanceKm: altitudeKm + focus.data.radiusKm,
+      // Desde la Tierra (la ISS da la vuelta en hora y media: no dice nada).
+      skyConstellation: earth && focus !== earth && focus.data.kind !== 'station' ? this.sky.seenFrom(earth.positionKm, focus.positionKm) : null,
       time: { date: this.clock.date, rateIndex: this.clock.rateIndex, paused: this.clock.paused },
       tools: { scale: this.scale.mode, orbits: this.orbits.visible, labels: this.labels.visible, flying: this.flying, sound: this.sound.enabled },
       travel: travel && {
@@ -683,7 +739,7 @@ export class Engine {
         distanceKm: km(travel.from.positionKm, travel.to.positionKm) * (1 - travel.progress),
       },
       stats: this.stats,
-      particles: this.bodies.reduce((n, b) => n + (this.solarHidden ? 0 : b.particleCount), (this.stars?.object.visible ? this.stars.count : 0) + this.cosmic.particleCount),
+      particles: this.bodies.reduce((n, b) => n + (this.solarHidden ? 0 : b.particleCount), (this.stars?.object.visible ? this.stars.count : 0) + this.cosmic.particleCount + this.sky.particleCount),
       pixelRatio: this.renderer.getPixelRatio(),
       backend: this.isWebGLFallback ? 'WebGL2' : 'WebGPU',
     }, now);

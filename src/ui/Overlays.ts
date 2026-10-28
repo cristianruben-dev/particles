@@ -105,6 +105,7 @@ const SHORTCUTS: [string, [string, string][]][] = [
     ['Botón derecho · Mayús + arrastrar', 'Mirar alrededor'],
     ['Rueda', 'Acercarse y alejarse, hasta el suelo'],
     ['Clic', 'Viajar al cuerpo o al nombre pulsado'],
+    ['Clic en el cielo', 'Ficha de la constelación'],
   ]],
   ['Teclado', [
     ['0 – 9', 'Sol y planetas'],
@@ -116,6 +117,7 @@ const SHORTCUTS: [string, [string, string][]][] = [
     ['C', 'Eclipses, tránsitos y cometas'],
     ['G', 'Vía Láctea · volver al sistema solar'],
     ['E · O · L', 'Escala · órbitas · nombres'],
+    ['K · B', 'Constelaciones · sus límites'],
     ['M', 'Sonido ambiente'],
     ['U', 'Ocultar la interfaz'],
   ]],

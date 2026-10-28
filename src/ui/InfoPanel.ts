@@ -15,6 +15,8 @@ export interface InfoLive {
   sunDistanceKm: number;
   earthDistanceKm: number;
   cameraDistanceKm: number;
+  /** Constelación en la que se ve desde la Tierra (§15.3), o null. */
+  skyConstellation: string | null;
 }
 
 /** Tipo del cuerpo para los subtítulos: «Gigante de hielo · 7.º planeta», «Luna de Júpiter». */
@@ -75,8 +77,9 @@ export class InfoPanel {
     const light = row('La luz del Sol tarda');
     const earth = row('Distancia a la Tierra');
     const camera = row('Distancia a la cámara');
-    this.live = { sunDistanceKm: sun[1], light: light[1], earthDistanceKm: earth[1], cameraDistanceKm: camera[1] };
-    this.liveRows = { sunDistanceKm: sun[0], light: light[0], earthDistanceKm: earth[0], cameraDistanceKm: camera[0] };
+    const sky = row('Visto desde la Tierra');
+    this.live = { sunDistanceKm: sun[1], light: light[1], earthDistanceKm: earth[1], cameraDistanceKm: camera[1], skyConstellation: sky[1] };
+    this.liveRows = { sunDistanceKm: sun[0], light: light[0], earthDistanceKm: earth[0], cameraDistanceKm: camera[0], skyConstellation: sky[0] };
     liveSection.append(liveGrid);
 
     this.land = el('button', 'ui-action ui-action-primary ui-info-land');
@@ -151,6 +154,8 @@ export class InfoPanel {
     setText(this.live.light, lightTime(live.sunDistanceKm));
     setText(this.live.earthDistanceKm, formatDistance(live.earthDistanceKm));
     setText(this.live.cameraDistanceKm, formatDistance(live.cameraDistanceKm));
+    this.liveRows.skyConstellation.hidden = live.skyConstellation === null;
+    if (live.skyConstellation) setText(this.live.skyConstellation, `en ${live.skyConstellation}`);
   }
 
   set landDisabled(disabled: boolean) {

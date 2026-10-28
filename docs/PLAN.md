@@ -206,6 +206,51 @@ Antes de empezar: cerrar la medición de los 60 fps de la fase 4, porque la capa
 
 ---
 
+## Fase 6 — Constelaciones (en curso)
+
+Objetivo: ver las 88 constelaciones de la IAU sobre el cielo real, desde la órbita y desde el suelo, saber qué es cada una y en cuál está cada planeta esta noche. Diseño en ARQUITECTURA §15.
+
+Hecho en la rama `constelaciones`, que parte del commit de la fase 5 sin las galaxias (sin commit en `master` entonces): al juntarlas habrá conflictos en `Engine`, `Hud`, `InfoPanel`, `OrbitMode`, `Labels`/`style.css` y en estos documentos.
+
+0. [x] **Datos** (`scripts/build-constellations.mjs` → `public/data/constellations.json`, se carga como `stars.bin`): figuras de la IAU (d3-celestial: 89 trazos, la Serpiente partida en dos), límites oficiales (Delporte 1930, VI/49 en J2000), nombres en español con su posición y rango, nombres propios de las ~100 estrellas más brillantes y la tabla de Roman (1987). Por constelación, calculados en el script: área, estrella más brillante y número de estrellas a simple vista (Yale).
+1. [x] **Precesión** IAU 1976 (J2000 ↔ B1875) en `astro/frames.ts` y `constellationAt(dirección)` con la tabla de Roman en `astro/constellations.ts`, junto con lo escrito a mano: qué representa cada una y si es del zodiaco.
+2. [x] **Figuras** (`bodies/Constellations.ts`): líneas de puntos sobre la esfera celeste, como `Starfield`, con un hueco junto a cada estrella y por debajo del umbral del bloom. Se trazan desde las estrellas al activarlas y se apagan con las mismas máscaras que las estrellas: horizonte, día, totalidad y relevo hacia el cosmos.
+3. [x] **Límites**: puntos más tenues y espaciados, con los bordes de la IAU (paralelos y meridianos de B1875, curvos en J2000).
+4. [x] **Nombres** (`ui/ConstellationLabels.ts`): en español y en versalitas, los grandes primero y sin solaparse, ocultos bajo el horizonte; pulsables. Opcional: nombres de las estrellas brillantes (Sirio, Betelgeuse, Vega…).
+5. [x] **Resaltado**: con el ratón sobre el cielo, la constelación que hay debajo se ilumina (figura, límite y nombre); con un clic se selecciona y abre su ficha.
+6. [x] **Ficha de la constelación**: nombre, nombre latino y genitivo, abreviatura, qué representa, área y puesto por tamaño, estrella más brillante, estrellas a simple vista, desde qué latitudes se ve entera, el mejor mes para verla (cuando culmina a medianoche) y si es del zodiaco.
+7. [x] **Mirar hacia una constelación**: en órbita, la cámara gira alrededor del cuerpo sin cambiar la altitud hasta dejarla junto al planeta; a ras de suelo gira la mirada si está sobre el horizonte y, si no, lo avisa. Para eso, desde el suelo la mirada sube ahora hasta ~68° sobre el horizonte (antes se quedaba justo por debajo).
+8. [x] **Panel de constelaciones**: interruptores (figuras, límites, nombres, estrellas, eclíptica), buscador y lista con filtros (todas, zodiaco, visibles ahora desde el suelo, norte y sur).
+9. [x] **¿En qué constelación está?**: en la ficha de cada cuerpo, «Desde la Tierra: en Leo», con la dirección en km verdaderos desde la Tierra (no en escena: la escala comprimida tuerce las direcciones). El Sol, en la constelación del zodiaco del día.
+10. [x] **Eclíptica y ecuador celeste** como líneas de puntos opcionales (el camino del Sol y los planetas por el zodiaco).
+11. [x] **Interfaz**: botón en las herramientas (abre el panel), `K` figuras y `B` límites (también en los ajustes), todo guardado en `localStorage`, la ayuda y un clic en el cielo vacío abre la ficha. Las figuras salen encendidas la primera vez.
+
+**Hecho cuando:**
+- [x] Cada vértice de las figuras cae a ≤ 0,05° de una estrella de Yale (sin espejos ni saltos en ±180°): el más lejano, a 0,0025° (Centauro).
+- [x] `constellationAt` acierta con Betelgeuse (Orión), la Polar (Osa Menor), Sirio (Can Mayor), Antares (Escorpio), el centro galáctico (Sagitario) y la Gran Nube de Magallanes (Dorado), y las 89 posiciones de nombre caen dentro de su límite.
+- [x] Las áreas de los límites coinciden con las de la IAU: Hidra 1.302,85 grados² (1.302,84), Cruz 68,45 (68,45), Osa Mayor 1.279,65 (1.279,66); en total, 41.252,96.
+- [x] La constelación de cada cuerpo coincide con la de JPL Horizons (cantidad 29, desde el geocentro): los diez del 28/10/2026 (el Sol y Venus en Virgo, la Luna y Urano en Tauro, Mercurio en Libra, Marte en Cáncer, Júpiter en Leo, Saturno en la Ballena, Neptuno en Piscis y Plutón en Capricornio) y el Sol, Marte, Júpiter y Saturno el 28/07/2061.
+- [~] Visto en el navegador: Orión desde el suelo, nada bajo el horizonte, las figuras apagadas de día y desaparecidas lejos del Sol. Falta la Cruz del Sur desde el hemisferio sur y mirarlo todo con la ventana delante.
+
+**Verificaciones de la fase 6** (panel del navegador oculto, 1024×768, calidad alta, frames avanzados a mano):
+- Datos: 150 trazos, 257 bordes y 100 estrellas con nombre (124 KB). 1.152 tramos de borde siguen paralelos de B1875 y se densifican; el casquete de la Osa Menor venía con puntos interpolados en J2000 hasta 0,45° por debajo de los +88° de B1875 y se devuelven al paralelo. La eclíptica cruza 13 constelaciones (Ofiuco, de λ 247,6° a 266,2°).
+- Partículas: 20.562 en las figuras, 14.420 en los límites y 1.600 en las guías; solo se dibujan las capas encendidas.
+- Desde la órbita de la Tierra, «mirar hacia» deja Orión junto al planeta con la orientación real (Betelgeuse al este de Bellatrix, Rigel al suroeste). Desde Madrid el 15/12/2026 a medianoche, Orión a 55,5° de altura (culmina a 54,6°) y la cámara apuntando a su centro con un error de 0,00002°; las líneas acaban en el horizonte. A mediodía, el brillo baja a 0,05 y los nombres se ocultan.
+- Ficha de Orión: 594,1 grados² (26.ª de 88), Rigel (β Ori, 0,12), 128 estrellas a simple vista, entera entre 67° S y 79° N, mejor en diciembre. Ficha de Marte: «Visto desde la Tierra: en Cáncer».
+- Ratón (simulado): sobre Orión resalta Orión; sobre la Tierra, nada.
+- Con `G` hasta 120.000 años luz: a 5 años luz ya no se dibuja nada (ni nombres) y de vuelta a 600 UA reaparece todo.
+- Barra inferior: a 1.645 px cabe en una fila con 21 px de margen; en el móvil (375 px) la fila de herramientas se desplaza en horizontal (383 px en 358) sin desbordar la página.
+
+**Pendientes detectados en la fase 6:**
+- Mirar las figuras a pantalla completa con la ventana delante: brillo de las líneas (0,32 sin resaltar) y separación de los puntos, y si los nombres de las constelaciones de rango 3 sobran.
+- El ratón y el clic sobre el cielo solo se han probado llamando a las funciones; falta con el ratón de verdad (y que el clic en el vacío no moleste a quien hace clic para nada).
+- En órbita, «mirar hacia» deja la constelación junto al planeta, a veces bajo el título o el panel: podría tener en cuenta la interfaz.
+- Al juntar con la rama de las galaxias: el corte a una fila de la barra inferior pasa allí a 1.700 px por «Galaxias»; con el botón de constelaciones habrá que medirlo de nuevo.
+
+**Fuera de esta fase:** ilustraciones mitológicas (licencias y alinearlas con las estrellas), constelaciones que se deforman al alejarse (necesitan las estrellas en 3D con HYG, fase 5 paso 3), otras culturas del cielo (china, nórdica…) y sonido propio.
+
+---
+
 ## Riesgos conocidos
 
 | Riesgo | Mitigación |

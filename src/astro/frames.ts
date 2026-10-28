@@ -23,16 +23,60 @@ export const length3d = (v: Vec3d): number => Math.hypot(v.x, v.y, v.z);
 /** Eclíptico → ejes de escena. */
 export const eclToScene = (v: Vec3d): Vec3d => ({ x: v.x, y: v.z, z: -v.y });
 
+/** Ejes de escena → eclíptico (la inversa de `eclToScene`). */
+export const sceneToEcl = (v: Vec3d): Vec3d => ({ x: v.x, y: -v.z, z: v.y });
+
 /** Ecuatorial J2000 → eclíptico J2000 (rotación −ε alrededor de x). */
 export function equatorialToEcliptic(v: Vec3d): Vec3d {
   const c = Math.cos(OBLIQUITY_J2000), s = Math.sin(OBLIQUITY_J2000);
   return { x: v.x, y: v.y * c + v.z * s, z: -v.y * s + v.z * c };
 }
 
+/** Eclíptico J2000 → ecuatorial J2000 (la inversa de `equatorialToEcliptic`). */
+export function eclipticToEquatorial(v: Vec3d): Vec3d {
+  const c = Math.cos(OBLIQUITY_J2000), s = Math.sin(OBLIQUITY_J2000);
+  return { x: v.x, y: v.y * c - v.z * s, z: v.y * s + v.z * c };
+}
+
 /** Ascensión recta / declinación (rad) → vector unitario ecuatorial. */
 export function raDecToVector(ra: number, dec: number): Vec3d {
   const cd = Math.cos(dec);
   return { x: cd * Math.cos(ra), y: cd * Math.sin(ra), z: Math.sin(dec) };
+}
+
+/** Vector ecuatorial → ascensión recta (0–2π) y declinación (rad). */
+export function vectorToRaDec(v: Vec3d): [number, number] {
+  const ra = Math.atan2(v.y, v.x);
+  return [ra < 0 ? ra + 2 * Math.PI : ra, Math.atan2(v.z, Math.hypot(v.x, v.y))];
+}
+
+/** Matriz 3×3 por filas. */
+export type Matrix3 = readonly [readonly [number, number, number], readonly [number, number, number], readonly [number, number, number]];
+
+export const applyMatrix = (m: Matrix3, v: Vec3d): Vec3d => ({
+  x: m[0][0] * v.x + m[0][1] * v.y + m[0][2] * v.z,
+  y: m[1][0] * v.x + m[1][1] * v.y + m[1][2] * v.z,
+  z: m[2][0] * v.x + m[2][1] * v.y + m[2][2] * v.z,
+});
+
+/** B1875.0 (JD 2405889,258550475), en siglos julianos desde J2000: la época de los límites de las constelaciones. */
+export const B1875_CENTURIES = (2405889.258550475 - 2451545) / 36525;
+
+/**
+ * Precesión IAU 1976 (Lieske 1977) del ecuador y el equinoccio de J2000 a `t` siglos
+ * julianos: r(t) = P · r(J2000). La misma fórmula que en `scripts/build-constellations.mjs`.
+ */
+export function precessionMatrix(t: number): Matrix3 {
+  const as = DEG / 3600;
+  const zeta = (2306.2181 * t + 0.30188 * t * t + 0.017998 * t ** 3) * as;
+  const z = (2306.2181 * t + 1.09468 * t * t + 0.018203 * t ** 3) * as;
+  const theta = (2004.3109 * t - 0.42665 * t * t - 0.041833 * t ** 3) * as;
+  const cz = Math.cos(zeta), sz = Math.sin(zeta), cZ = Math.cos(z), sZ = Math.sin(z), ct = Math.cos(theta), st = Math.sin(theta);
+  return [
+    [cz * ct * cZ - sz * sZ, -sz * ct * cZ - cz * sZ, -st * cZ],
+    [cz * ct * sZ + sz * cZ, -sz * ct * sZ + cz * cZ, -st * sZ],
+    [cz * st, -sz * st, ct],
+  ];
 }
 
 /**

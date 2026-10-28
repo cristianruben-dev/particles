@@ -12,6 +12,7 @@ import { BODIES, type BodyId } from '../astro/bodies';
 import { FACTS } from '../astro/facts';
 import type { FrameStats, Quality } from '../core/Quality';
 import { BodyDock, type HudBody } from './BodyDock';
+import { ConstellationPanel, type ConstellationSource } from './ConstellationPanel';
 import { EventsPanel, type EventsSource } from './EventsPanel';
 import { accentColor, el } from './dom';
 import { FocusTitle, type TitleActions } from './FocusTitle';
@@ -28,6 +29,8 @@ export interface HudActions extends TimeActions, TitleActions {
   bodies: HudBody[];
   /** Eclipses, tránsitos y cometas para el calendario. */
   events: Omit<EventsSource, 'onClose'>;
+  /** Constelaciones: interruptores, lista y ficha. */
+  sky: Omit<ConstellationSource, 'onClose'>;
   quality: Quality;
   /** Preferencias del panel de ajustes. */
   toggles: SettingsToggle[];
@@ -49,7 +52,7 @@ export interface HudState extends InfoLive {
   nearGround: boolean;
   descending: boolean;
   time: TimeState;
-  tools: ToolState;
+  tools: Omit<ToolState, 'sky'>;
   travel: { name: string; progress: number; distanceKm: number } | null;
   stats: FrameStats;
   particles: number;
@@ -69,6 +72,7 @@ export class Hud {
   private readonly settings: SettingsPanel;
   private readonly info: InfoPanel;
   private readonly events: EventsPanel;
+  readonly sky: ConstellationPanel;
   private readonly help: HelpOverlay;
   private readonly travel = new TravelCard();
   private readonly fly: HTMLElement;
@@ -93,6 +97,7 @@ export class Hud {
       onSetScale: actions.onSetScale,
       onToggleOrbits: actions.onToggleOrbits,
       onToggleLabels: actions.onToggleLabels,
+      onConstellations: () => this.toggleSky(),
       onToggleFly: actions.onToggleFly,
       onToggleSound: actions.onToggleSound,
       onEvents: () => this.toggleEvents(),
@@ -102,6 +107,7 @@ export class Hud {
     });
     this.info = new InfoPanel({ onClose: () => this.info.setOpen(false), onLand: actions.onLand });
     this.events = new EventsPanel({ ...actions.events, onClose: () => this.events.setOpen(false) });
+    this.sky = new ConstellationPanel({ ...actions.sky, onClose: () => this.sky.setOpen(false) });
     this.help = new HelpOverlay(() => this.help.setOpen(false));
 
     this.fly = el('div', 'ui-fly');
@@ -125,7 +131,7 @@ export class Hud {
       region('ui-tl', this.title.el),
       region('ui-tr', this.perf.el, this.settings.el),
       region('ui-bottom', this.time.el, region('ui-bc', this.coach.el, this.dock.el), this.tools.el),
-      region('ui-right', this.info.el, this.events.el),
+      region('ui-right', this.info.el, this.events.el, this.sky.el),
       this.travel.el,
       this.fly,
       this.toasts.el,
@@ -158,6 +164,7 @@ export class Hud {
       if (this.help.open) this.help.setOpen(false);
       else if (this.settings.open) this.settings.setOpen(false);
       else if (this.events.open) this.events.setOpen(false);
+      else if (this.sky.open) this.sky.setOpen(false);
       else if (this.info.open) this.info.setOpen(false);
       else if (this.hidden) this.toggleHidden();
       else return false;
@@ -211,19 +218,24 @@ export class Hud {
       siteName: site?.name ?? null,
     });
     this.time.update(s.time);
-    this.tools.update(s.tools);
+    this.tools.update({ ...s.tools, sky: this.sky.open });
     this.info.landDisabled = s.descending;
     this.info.update(s, now);
     this.events.update(s.time.date.getTime());
+    this.sky.update(s.time.date.getTime(), now);
     this.settings.update({ particles: s.particles, pixelRatio: s.pixelRatio, backend: s.backend, fps: s.stats.fps, frameMs: s.stats.frameMs }, now);
   }
 
-  /** La ficha, los eventos y los ajustes comparten el lado derecho: abrir uno cierra los otros. */
+  /**
+   * La ficha, los eventos, las constelaciones y los ajustes comparten el lado derecho: abrir
+   * uno cierra los otros.
+   */
   private toggleInfo(): void {
     this.info.setOpen(!this.info.open);
     if (this.info.open) {
       this.settings.setOpen(false);
       this.events.setOpen(false);
+      this.sky.setOpen(false);
     }
   }
 
@@ -232,6 +244,7 @@ export class Hud {
     if (this.settings.open) {
       this.info.setOpen(false);
       this.events.setOpen(false);
+      this.sky.setOpen(false);
     }
   }
 
@@ -240,7 +253,25 @@ export class Hud {
     if (this.events.open) {
       this.info.setOpen(false);
       this.settings.setOpen(false);
+      this.sky.setOpen(false);
     }
+  }
+
+  private toggleSky(): void {
+    this.sky.setOpen(!this.sky.open);
+    if (this.sky.open) this.closeOthers();
+  }
+
+  /** Ficha de una constelación (clic en el cielo o en su nombre). */
+  showConstellation(index: number, timeMs: number): void {
+    this.sky.show(index, timeMs);
+    this.closeOthers();
+  }
+
+  private closeOthers(): void {
+    this.info.setOpen(false);
+    this.events.setOpen(false);
+    this.settings.setOpen(false);
   }
 
   private toggleHelp(): void {

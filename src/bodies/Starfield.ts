@@ -11,11 +11,25 @@ import { pixelAngle, softDisc } from '../particles/nodes';
 import { ParticleField, vec4Buffer } from '../particles/ParticleField';
 
 /** Radio de la esfera celeste en escena (dentro del plano lejano). */
-const SKY_RADIUS = 1e9;
+export const SKY_RADIUS = 1e9;
 
 export const starLook = {
   brightness: uniform(1),
 };
+
+let catalog: Promise<Float32Array> | null = null;
+
+/** El catálogo de Yale: 4 floats por estrella [AR (rad), Dec (rad), V, B−V]. Se descarga una vez. */
+export function loadStarCatalog(url = `${import.meta.env.BASE_URL}data/stars.bin`): Promise<Float32Array> {
+  catalog ??= fetch(url).then(async (r) => new Float32Array(await r.arrayBuffer()));
+  return catalog;
+}
+
+/** Magnitud → tamaño en píxeles (flujo ∝ 10^(−0,4·m), comprimido). */
+export function starSizePx(vmag: number): number {
+  const t = Math.min(1, Math.max(0, (6.5 - vmag) / 8));
+  return 1.6 + 5 * t * t;
+}
 
 /** Índice de color B-V → RGB aproximado (0–1). */
 export function bvToRgb(bv: number): [number, number, number] {
@@ -26,8 +40,8 @@ export function bvToRgb(bv: number): [number, number, number] {
   return [r, g, b];
 }
 
-export async function createStarfield(url = `${import.meta.env.BASE_URL}data/stars.bin`): Promise<ParticleField> {
-  const raw = new Float32Array(await (await fetch(url)).arrayBuffer());
+export async function createStarfield(): Promise<ParticleField> {
+  const raw = await loadStarCatalog();
   const count = raw.length / 4;
   const position = new Float32Array(count * 4);
   const color = new Float32Array(count * 4);
@@ -35,9 +49,8 @@ export async function createStarfield(url = `${import.meta.env.BASE_URL}data/sta
   for (let i = 0; i < count; i++) {
     const [ra, dec, vmag, bv] = raw.subarray(i * 4, i * 4 + 4);
     const dir = eclToScene(equatorialToEcliptic(raDecToVector(ra, dec)));
-    // Magnitud → tamaño en píxeles y brillo (flujo ∝ 10^(−0,4·m), comprimido).
-    const t = Math.min(1, Math.max(0, (6.5 - vmag) / 8));
-    const sizePx = 1.6 + 5 * t * t;
+    // Magnitud → tamaño en píxeles y brillo.
+    const sizePx = starSizePx(vmag);
     const intensity = Math.min(3.5, Math.max(0.05, 0.3 * Math.pow(10, -0.4 * (vmag - 1.5))));
     const [r, g, b] = bvToRgb(bv);
     position.set([dir.x * SKY_RADIUS, dir.y * SKY_RADIUS, dir.z * SKY_RADIUS, sizePx], i * 4);

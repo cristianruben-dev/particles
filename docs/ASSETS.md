@@ -47,6 +47,7 @@ Se instalan con npm (Fontsource) y Vite las empaqueta: no van en `public/`.
 | Dato | Fuente | Licencia |
 |---|---|---|
 | Estrellas | Yale Bright Star Catalog (~9.000 estrellas) o HYG Database (~120.000) | Dominio público / CC BY-SA 4.0 (HYG) |
+| Constelaciones (figuras, límites, nombres) | d3-celestial (IAU y Sky & Telescope; Delporte 1930 vía CDS VI/49) y Roman 1987 (CDS VI/42, vía astropy) | BSD-3-Clause (d3-celestial y astropy) |
 | Órbitas planetarias | JPL — *Keplerian Elements for Approximate Positions of the Major Planets* | Dominio público |
 | Verificación | JPL Horizons (efemérides de referencia) | Dominio público |
 | Anillos de Saturno | Perfil radial de opacidad (Cassini) | Dominio público |
@@ -81,7 +82,8 @@ public/
 ├── textures/<cuerpo>/height_<res>.png      (16 bits si es posible)
 ├── textures/<cuerpo>/night_<res>.jpg       (solo Tierra)
 ├── textures/<cuerpo>/clouds_<res>.jpg      (solo Tierra)
-└── data/stars.bin                          (catálogo convertido a binario)
+├── data/stars.bin                          (catálogo convertido a binario)
+└── data/constellations.json                (figuras, límites y nombres de las constelaciones)
 ```
 
 Resoluciones previstas: `2k` para la carga inicial, `8k` y `16k` bajo demanda (fase 3).
@@ -101,6 +103,14 @@ Descargados el 27/10/2026 y redimensionados con `sips` (macOS). Todo es dominio 
 | `data/stars.bin` | https://cdsarc.cds.unistra.fr/ftp/V/50/catalog.gz | Yale Bright Star Catalog, 5ª ed. (Hoffleit & Warren), vía CDS VizieR V/50 | `node scripts/build-stars.mjs <catalog>` → 9.096 estrellas, 4 float32 (RA, Dec, Vmag, B-V) |
 
 El catálogo original no se guarda en el repo: para regenerar `stars.bin`, descarga y descomprime `catalog.gz` y pasa su ruta al script.
+
+### Constelaciones (fase 6)
+
+| Archivo en `public/` | Origen | Crédito / licencia | Proceso |
+|---|---|---|---|
+| `data/constellations.json` | d3-celestial (`data/` del repositorio `ofrohn/d3-celestial`, rama master, 28/10/2026): `constellations.json`, `constellations.lines.json`, `constellations.borders.json`, `constellations.bounds.json`, `starnames.json` y `stars.6.json`. Y `constellation_data_roman87.dat` de astropy (`astropy/coordinates/data`) | **Figuras**: IAU y Sky & Telescope, con retoques de Olaf Frohn; **compilación**: © 2015 Olaf Frohn, **BSD-3-Clause** (hay que conservar el aviso de copyright). **Límites**: Delporte (1930), en J2000 de Davenhall y Leggett (CDS VI/49). **Tabla**: Roman (1987, PASP 99, 695; CDS VI/42), en la copia de astropy (BSD-3-Clause). **Nombres de estrellas**: IAU WGSN, vía d3-celestial | `node scripts/build-constellations.mjs <d3-celestial/data> <constellation_data_roman87.dat>`: figuras ajustadas a las estrellas de Yale (índices en `stars.bin`), bordes densificados en B1875, áreas, estrella más brillante, estrellas a simple vista, tramos de la eclíptica y las 100 estrellas con nombre más brillantes |
+
+Si se regenera `stars.bin`, hay que regenerar también `constellations.json`: las figuras guardan índices de estrellas. Los nombres en español, qué representa cada constelación y su origen están escritos a mano en `src/astro/constellations.ts`.
 
 ### Fase 2 (27/10/2026)
 

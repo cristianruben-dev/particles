@@ -16,6 +16,7 @@ export const icons = {
   scale: svg('<path d="M3.5 12h17M3.5 12 7 8.5M3.5 12 7 15.5M20.5 12 17 8.5M20.5 12 17 15.5"/>'),
   orbits: svg(`<ellipse cx="12" cy="12" rx="9.2" ry="4.4" transform="rotate(-22 12 12)"/><circle cx="12" cy="12" r="2.3" ${fill}/><circle cx="19.6" cy="9.1" r="1.4" ${fill}/>`),
   labels: svg('<path d="M3.8 12.6V5.3c0-.8.7-1.5 1.5-1.5h7.3l7.6 7.6-8.8 8.8z"/><circle cx="8.3" cy="8.3" r="1.5"/>'),
+  constellation: svg(`<path d="M4 16.5 8.6 9.6l4.6 3 3.6-6 3.6 2.6M13.2 12.6l1.3 6.4" stroke-width="1.1" opacity=".7"/><circle cx="4" cy="16.5" r="1.7" ${fill}/><circle cx="8.6" cy="9.6" r="1.4" ${fill}/><circle cx="13.2" cy="12.6" r="1.5" ${fill}/><circle cx="16.8" cy="6.6" r="1.9" ${fill}/><circle cx="20.4" cy="9.2" r="1.2" ${fill}/><circle cx="14.5" cy="19" r="1.2" ${fill}/>`),
   fly: svg('<path d="M12 3.2 19 20.4l-7-3.9-7 3.9z"/>'),
   orbit: svg(`<circle cx="12" cy="12" r="3.4" ${fill}/><path d="M20.5 12a8.5 8.5 0 0 1-15.6 4.7M3.5 12a8.5 8.5 0 0 1 15.6-4.7"/><path d="M19.1 3.6v3.7h-3.7M4.9 20.4v-3.7h3.7"/>`),
   info: svg('<circle cx="12" cy="12" r="8.8"/><path d="M12 11v5.6"/><circle cx="12" cy="7.8" r=".4" fill="currentColor"/>'),
