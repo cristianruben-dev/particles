@@ -66,7 +66,8 @@ export interface SurfacePreset {
   reference?: number;
 }
 
-const tex = (body: string, file: string) => `/textures/${body}/${file}`;
+/** Ruta de una textura de `public/`, con la base del despliegue (en GitHub Pages, una subruta). */
+const tex = (body: string, file: string) => `${import.meta.env.BASE_URL}textures/${body}/${file}`;
 
 export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
   mercury: {

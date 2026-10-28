@@ -26,7 +26,7 @@ export function bvToRgb(bv: number): [number, number, number] {
   return [r, g, b];
 }
 
-export async function createStarfield(url = '/data/stars.bin'): Promise<ParticleField> {
+export async function createStarfield(url = `${import.meta.env.BASE_URL}data/stars.bin`): Promise<ParticleField> {
   const raw = new Float32Array(await (await fetch(url)).arrayBuffer());
   const count = raw.length / 4;
   const position = new Float32Array(count * 4);

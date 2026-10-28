@@ -2,7 +2,7 @@
 
 Cuatro fases. Cada una termina en algo que se puede abrir en el navegador y disfrutar. Cada fase tiene un **criterio de "hecho"** comprobable: no se pasa a la siguiente hasta cumplirlo.
 
-Estado: **Fase 4 en curso**: perfiles de calidad, medidor de fps, interfaz nueva, ficha, aterrizaje, vuelo libre, warp y pantalla de carga hechos. Quedan el despliegue, el descenso entre nubes de los gigantes y el sonido (opcional), y comprobar con la ventana delante los 60 fps (el medidor del HUD ya lo permite) y que nada tiemble en escala real.
+Estado: **Fase 4 en curso**: perfiles de calidad, medidor de fps, interfaz nueva, ficha, aterrizaje, vuelo libre, warp y pantalla de carga hechos. Publicado en GitHub Pages. Quedan el descenso entre nubes de los gigantes y el sonido (opcional), y comprobar con la ventana delante los 60 fps (el medidor del HUD ya lo permite) y que nada tiemble en escala real.
 
 ---
 
@@ -114,7 +114,7 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 4. [ ] Sonido ambiente (opcional; zumbido grave cerca de los gigantes, silencio en el vacío).
 5. [x] Rendimiento: perfiles de calidad (baja/media/alta/ultra), detección del equipo, ajuste automático y medidor de fps con gráfica (§12).
 6. [x] Pantalla de carga con el sistema "formándose" desde el polvo (§11).
-7. [ ] Despliegue estático (Vercel, Netlify o GitHub Pages).
+7. [x] Despliegue estático en GitHub Pages (`.github/workflows/pages.yml`): build con la subruta del repo en cada push a `master`; las rutas de `public/` llevan `import.meta.env.BASE_URL`.
 8. [x] Extra: interfaz rediseñada entera (título, tiempo, navegador de cuerpos, herramientas, ajustes, ayuda, avisos y pista de bienvenida), con atajos nuevos (`T` aterrizar, `V` vuelo, `I` ficha, `U` ocultar, `?` ayuda).
 
 **Hecho cuando:** una persona que no conoce el proyecto lo abre, explora sin instrucciones y aterriza en Marte.

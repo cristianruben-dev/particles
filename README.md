@@ -4,6 +4,8 @@ Un sistema solar navegable donde todo está hecho de partículas: del Sol a los 
 
 Web · Three.js (WebGPU con respaldo WebGL2) · TypeScript · Vite.
 
+**Pruébalo:** https://cristianruben-dev.github.io/particles/ (mejor en Chrome, Edge o Safari recientes, con WebGPU).
+
 ## Arrancar
 
 ```bash
@@ -19,6 +21,7 @@ Abre la URL que muestra Vite. Añade `?debug` para ver el panel de debug.
 | `npm run build` | Comprobación de tipos + build de producción en `dist/` |
 | `npm run typecheck` | Solo la comprobación de tipos |
 | `npm run preview` | Sirve el build de producción |
+| `BASE_PATH=/particles/ npm run build` | Build para una subruta (lo hace el flujo de GitHub Pages en cada push a `master`) |
 | `node scripts/build-stars.mjs <catalog>` | Regenera `public/data/stars.bin` desde el Yale Bright Star Catalog |
 | `python3 -I scripts/build-mars-height.py <img> <png>` | Convierte el MOLA de Marte en el mapa de altura del globo (8 bits) |
 | `python3 -I scripts/build-height-u16.py mola\|lola …` | Convierte MOLA (Marte) o LOLA (Luna) en el mapa de altura de la superficie (16 bits) |
