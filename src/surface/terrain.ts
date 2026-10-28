@@ -28,7 +28,10 @@ type Vec3Node = Node<'vec3'>;
 export interface HeightData {
   width: number;
   height: number;
-  data: Float32Array;
+  /** Alturas o, en los mapas de media precisión (`.f16z`), sus bits float16. */
+  data: Float32Array | Uint16Array;
+  /** Bits float16 → valor, si `data` los trae (la GPU lee la misma textura r16float). */
+  decode?: Float32Array;
   /** Longitud este del borde izquierdo (grados). */
   leftLon: number;
 }
@@ -116,14 +119,15 @@ export function sampleTexelsCpu(fx: number, fy0: number, map: HeightData): numbe
   const fy = Math.min(Math.max(fy0, 0), map.height - 1);
   const x0 = Math.floor(fx), y0 = Math.floor(fy);
   const wx = bsplineWeights(fx - x0), wy = bsplineWeights(fy - y0);
-  const d = map.data, w = map.width;
+  const d = map.data, w = map.width, decode = map.decode;
   let sum = 0;
   for (let j = 0; j < 4; j++) {
     const y = Math.min(Math.max(y0 + j - 1, 0), map.height - 1);
     let row = 0;
     for (let i = 0; i < 4; i++) {
       const x = (((x0 + i - 1) % w) + w * 2) % w;
-      row += d[y * w + x] * wx[i];
+      const v = d[y * w + x];
+      row += (decode ? decode[v] : v) * wx[i];
     }
     sum += row * wy[j];
   }
@@ -236,7 +240,8 @@ const bsplineGpu = (t: FloatNode): FloatNode[] => {
 };
 
 /**
- * B-spline cúbica del mapa de alturas (r32float) a mano, como `sampleTexelsCpu`.
+ * B-spline cúbica del mapa de alturas (r32float, o r16float en los de media precisión) a mano,
+ * como `sampleTexelsCpu`.
  * Coordenada = parte entera (exacta) + resto, para no perder precisión lejos del origen.
  * Devuelve la altura **menos `reference`**, restada en cada texel antes de interpolar: así se
  * suman números pequeños. Restar después dos alturas de ~0,6 en float32 deja escalones de
@@ -280,13 +285,16 @@ export interface ChunkLattice {
 
 /**
  * Suma de las octavas 2D de `FIRST_FACE_OCTAVE` a `lastOctave` (ambas incluidas) en un
- * punto de un chunk. Las celdas se calculan en u32 a partir del índice del nodo, como en la CPU.
+ * punto de un chunk, y lo que aporta la última (la superficie la funde con la distancia para
+ * que no cambie la textura en el borde entre dos niveles, §7.3). Las celdas se calculan en
+ * u32 a partir del índice del nodo, como en la CPU.
  *
  * Sin `If`: TSL declara una expresión compartida en el primer bloque donde se usa, y si ese
  * bloque es condicional, fuera de él vale 0. Todas las octavas se evalúan y se enmascaran.
  */
-export function faceOctavesGpu(lat: ChunkLattice, lastOctave: FloatNode, rough: FloatNode, radiusKm: number, maxOctave: number): FloatNode {
+export function faceOctavesGpu(lat: ChunkLattice, lastOctave: FloatNode, rough: FloatNode, radiusKm: number, maxOctave: number): { sum: FloatNode; last: FloatNode } {
   let sum: FloatNode = float(0);
+  let last: FloatNode = float(0);
   const iu = uint(lat.iu), iv = uint(lat.iv), depth = int(lat.depth);
   for (let m = FIRST_FACE_OCTAVE; m <= maxOctave; m++) {
     // Celda absoluta = nodo << (m − d) + parte entera de la posición escalada (o nodo >> (d − m)).
@@ -308,9 +316,11 @@ export function faceOctavesGpu(lat: ChunkLattice, lastOctave: FloatNode, rough: 
     const amp = rough.mul(faceOctaveKm(m, radiusKm) / radiusKm);
     const seed = lat.face.mul(64).add(101 + m);
     const active = float(m).lessThanEqual(lastOctave).select(float(1), float(0));
-    sum = sum.add(noise2Gpu(cu, cv, fu, fv, seed).sub(0.5).mul(2).mul(amp).mul(active));
+    const term = noise2Gpu(cu, cv, fu, fv, seed).sub(0.5).mul(2).mul(amp);
+    sum = sum.add(term.mul(active));
+    last = last.add(term.mul(float(m).equal(lastOctave).select(float(1), float(0))));
   }
-  return sum;
+  return { sum, last };
 }
 
 /**

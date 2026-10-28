@@ -64,6 +64,8 @@ export interface SurfacePreset {
   heightSize?: { width: number; height: number };
   /** Altura normalizada del radio medio en ese mapa (si no, `heightReference`). */
   reference?: number;
+  /** Por debajo, agua en ese mapa (si no, `waterBelow`): con 16 bits la costa se distingue mejor. */
+  waterBelow?: number;
 }
 
 /** Ruta de una textura de `public/`, con la base del despliegue (en GitHub Pages, una subruta). */
@@ -100,7 +102,12 @@ export const ROCKY_PRESETS: Partial<Record<BodyId, RockyPreset>> = {
     waterBelow: 0.5 / 255,
     clouds: { count: 320_000, texture: tex('earth', 'clouds_2k.jpg'), altitude: 0.022 },
     atmosphere: { count: 140_000, thickness: 0.04, dayColor: 0x94c4ff, twilightColor: 0xffad75, strength: 1 },
-    surface: { relief: 0.0045, roughness: 0.03 },
+    // ETOPO 2022 en float16 (8192×4096, 5 km por texel) con la escala del mapa de 8 bits del
+    // globo (océano = 0, 1 = 6.396 m, medido con los dos): el suelo no salta en el relevo. Agua: altura ≤ 0.
+    surface: {
+      relief: 0.0045, roughness: 0.03, waterBelow: 1e-5,
+      height: tex('earth', 'height_8k.f16z'), heightSize: { width: 8192, height: 4096 },
+    },
   },
   moon: {
     count: 400_000,
@@ -207,10 +214,20 @@ export interface GasPreset {
    */
   bands?: { colors: number[]; jitter: number; contrast: number };
   noise: BakeNoise;
-  /** Velocidad relativa de las bandas (rad/s reales, artística) y nº de chorros por hemisferio. */
-  flow: { speed: number; jets: number };
+  /**
+   * Velocidad relativa de las bandas (rad/s reales, artística), nº de chorros por hemisferio y
+   * latitud (grados) por encima de la que no hay flujo: lo que haya en el polo no se deshace.
+   */
+  flow: { speed: number; jets: number; calm?: number };
   /** Vórtices: latitud y longitud (grados), radio (radianes) y giro (rad/s, + = antihorario visto desde fuera). */
   vortices: { lat: number; lon: number; radius: number; spin: number }[];
+  /** Manchas de color (óvalos): centro y semiejes en longitud y latitud (grados), color (sRGB). */
+  spots?: { lat: number; lon: number; width: number; height: number; color: number }[];
+  /**
+   * Hexágono polar (Saturno): latitud del borde (grados), giro de sus vértices (grados) y colores
+   * (sRGB) del interior, del chorro del borde y del vórtice del polo.
+   */
+  hexagon?: { lat: number; rotation: number; inside: number; jet: number; eye: number };
   atmosphere: AtmospherePreset;
   rings?: RingsPreset;
 }
@@ -238,14 +255,28 @@ export const GAS_PRESETS: Partial<Record<BodyId, GasPreset>> = {
   saturn: {
     count: 800_000,
     gain: 0.62,
+    // No hay un mapa global de Cassini sin anillos: perfil de bandas cada 10° de latitud con los
+    // colores de las imágenes de Cassini (2012–2017): zona ecuatorial clara, cinturones
+    // ecuatoriales tostados, norte azulado y sur más cálido.
     bands: {
-      colors: [0x7f8fa6, 0xb8a985, 0xd9c9a0, 0xe6d6ae, 0xd8c08c, 0xeadcb5, 0xe3cf9c, 0xd9c08a, 0xe8d8b0, 0xc9b48a, 0x8a8f9a],
-      jitter: 0.05,
-      contrast: 0.6,
+      colors: [
+        0x5b6f86, 0x6f8296, 0x9aa08f, 0xb8b08a, 0xcdbf93, 0xd8c79a, 0xd0b885, 0xe2d1a2, 0xd3b67c, 0xeee0b6,
+        0xd5b981, 0xe6d6aa, 0xcbb184, 0xd8c79e, 0xc7b48c, 0xbfa985, 0xae9a7c, 0x9a8a74, 0x8e7f6c,
+      ],
+      jitter: 0.03,
+      contrast: 0.5,
     },
     noise: { scale: 5, stretch: 9, octaves: 4 },
-    flow: { speed: 0.015, jets: 5 },
+    flow: { speed: 0.015, jets: 5, calm: 72 },
     vortices: [],
+    // El hexágono del polo norte (chorro a ~78° N, fijo respecto al giro del planeta) con su
+    // vórtice en el centro, y algunas tormentas blancas en el «callejón» de los 41° S.
+    hexagon: { lat: 77, rotation: 10, inside: 0x4f6b82, jet: 0x9fb2b6, eye: 0x2a3644 },
+    spots: [
+      { lat: -41, lon: 35, width: 2.4, height: 1.4, color: 0xf2ead4 },
+      { lat: -41.5, lon: 160, width: 1.8, height: 1.1, color: 0xefe6cf },
+      { lat: -40.5, lon: -95, width: 2.8, height: 1.5, color: 0xf4eedc },
+    ],
     atmosphere: { count: 100_000, thickness: 0.03, dayColor: 0xfff0cc, twilightColor: 0xd09a5a, strength: 0.7 },
     rings: {
       count: 700_000,
@@ -294,8 +325,14 @@ export const GAS_PRESETS: Partial<Record<BodyId, GasPreset>> = {
     bands: { colors: [0x5a7fd6, 0x3f63c9, 0x4b70dd, 0x3a5fd0, 0x4b70dd, 0x6d90e6], jitter: 0.04, contrast: 0.5 },
     noise: { scale: 5, stretch: 7, octaves: 4 },
     flow: { speed: 0.025, jets: 2 },
-    // Gran Mancha Oscura (Voyager 2, 1989): un toque artístico.
+    // Gran Mancha Oscura (Voyager 2, 1989): un toque artístico, con sus nubes blancas
+    // compañeras al sur y el «Scooter».
     vortices: [{ lat: -22, lon: 60, radius: 0.13, spin: -0.6 }],
+    spots: [
+      { lat: -22, lon: 60, width: 13, height: 6.5, color: 0x1f3170 },
+      { lat: -28.5, lon: 63, width: 7, height: 1.2, color: 0xe8f0ff },
+      { lat: -42, lon: 15, width: 2.5, height: 1.4, color: 0xf2f6ff },
+    ],
     atmosphere: { count: 70_000, thickness: 0.03, dayColor: 0x8fb4ff, twilightColor: 0x3d5aa8, strength: 0.9 },
   },
 };

@@ -66,6 +66,19 @@ export interface PoleData {
   decRate: number;
   w0: number;
   wRate: number;
+  /** Términos periódicos de la IAU (`NUT_PREC` en el kernel de NAIF), si los tiene. */
+  periodic?: PeriodicPole;
+}
+
+/**
+ * Términos periódicos de la orientación IAU con múltiplos de un ángulo N = n0 + n1·T (grados,
+ * T en siglos): α += Σ ra[k]·sin((k+1)N), δ += Σ dec[k]·cos((k+1)N) y W += Σ w[k]·sin((k+1)N).
+ */
+export interface PeriodicPole {
+  angle: [number, number];
+  ra: number[];
+  dec: number[];
+  w: number[];
 }
 
 /**
@@ -92,6 +105,11 @@ export interface SatelliteElements {
   nodeYears: number;
   /** Polo del plano de Laplace (RA/Dec ICRF, grados); null = ecuador del planeta. */
   laplacePole: { ra: number; dec: number } | null;
+  /**
+   * Órbita circular en el ecuador de la propia luna, con el planeta en su meridiano principal
+   * más este desfase (grados): la posición sale de su orientación IAU, no de los elementos.
+   */
+  fromRotation?: { meridianOffset: number };
 }
 
 export interface BodyData {
@@ -281,7 +299,7 @@ export const BODIES: Record<BodyId, BodyData> = {
   neptune: {
     id: 'neptune', name: 'Neptuno', kind: 'gas', parent: 'sun',
     radiusKm: 24_622, flattening: 0.0171, axialTiltDeg: 28.32, rotationPeriodH: 16.11, color: 0x4b70dd,
-    pole: pole(299.36, 0, 43.46, 0, 249.978, 541.1397757),
+    pole: { ...pole(299.36, 0, 43.46, 0, 249.978, 541.1397757), periodic: { angle: [357.85, 52.316], ra: [0.7], dec: [-0.51], w: [-0.48] } },
     orbit: {
       a: el(30.06992276, 0.00026291), e: el(0.00859048, 0.00005105), i: el(1.77004347, 0.00035372),
       L: el(-55.12002969, 218.45945325), longPeri: el(44.96476227, -0.32241464), longNode: el(131.78422574, -0.00508664),
@@ -291,12 +309,23 @@ export const BODIES: Record<BodyId, BodyData> = {
   triton: {
     id: 'triton', name: 'Tritón', kind: 'moon', parent: 'neptune',
     radiusKm: 1_353.4, axialTiltDeg: 0, rotationPeriodH: -141.04, color: 0xc3b9b0, tidallyLocked: true,
-    pole: pole(299.36, 0, 41.17, 0, 296.53, -61.2572637),
-    // Órbita retrógrada (i > 90°) respecto al ecuador de Neptuno. Sin precesión del nodo:
-    // con ella (299 años) el error frente a JPL Horizons crecía a 59° en 2026; sin ella, < 7°.
+    // Polo IAU con sus términos en N7 (el plano de la órbita precesa en 688 años alrededor del
+    // de Laplace). Tritón es síncrono y sin oblicuidad: su ecuador es el plano de la órbita y
+    // Neptuno está en su meridiano principal + 2,76° (ajustado a JPL Horizons, 1950–2100 cada
+    // 4 años: error < 0,1°). Con elementos medios fijos en el ecuador de Neptuno, < 7°.
+    pole: {
+      ...pole(299.36, 0, 41.17, 0, 296.53, -61.2572637),
+      periodic: {
+        angle: [177.85, 52.316],
+        ra: [-32.35, -6.28, -2.08, -0.74, -0.28, -0.11, -0.07, -0.02, -0.01],
+        dec: [22.55, 2.1, 0.55, 0.16, 0.05, 0.02, 0.01],
+        w: [22.25, 6.73, 2.05, 0.74, 0.28, 0.11, 0.05, 0.02, 0.01],
+      },
+    },
     satellite: {
-      a: 354_800, e: 0, i: 157.3, node: 177.7, peri: 0, M: 63.0,
+      a: 354_759, e: 0, i: 157.3, node: 177.7, peri: 0, M: 63.0,
       meanMotion: 61.2572637, anomalisticDays: 5.8792, nodeYears: 0, laplacePole: null,
+      fromRotation: { meridianOffset: 2.76 },
     },
   },
   pluto: {

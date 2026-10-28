@@ -115,6 +115,7 @@ const SHORTCUTS: [string, [string, string][]][] = [
     ['I', 'Ficha del cuerpo'],
     ['C', 'Eclipses, tránsitos y cometas'],
     ['E · O · L', 'Escala · órbitas · nombres'],
+    ['M', 'Sonido ambiente'],
     ['U', 'Ocultar la interfaz'],
   ]],
   ['Vuelo libre (V)', [

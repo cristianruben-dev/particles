@@ -9,6 +9,7 @@ import { findShadowEvents } from '../astro/eclipses';
 import { FACTS, type LandingSite } from '../astro/facts';
 import { refreshIssTle } from '../astro/iss';
 import { eclToScene } from '../astro/frames';
+import { Soundscape } from '../audio/Soundscape';
 import { AsteroidBelt } from '../bodies/AsteroidBelt';
 import type { CelestialBody, FrameContext } from '../bodies/CelestialBody';
 import { createBody } from '../bodies/createBody';
@@ -85,6 +86,8 @@ export class Engine {
   /** Cursor sobre el canvas en coordenadas normalizadas, o null si está fuera. */
   private pointerNdc: THREE.Vector2 | null = null;
   private readonly pointerRaycaster = new THREE.Raycaster();
+  /** Sonido ambiente (§13): activado salvo que se apagara en otra visita. */
+  private sound!: Soundscape;
 
   /**
    * @param progress Avance de la carga (0–1) y qué se está haciendo, para la pantalla de carga.
@@ -140,6 +143,7 @@ export class Engine {
         { id: 'mouse', label: 'Las partículas reaccionan al ratón', get: () => disturbanceLook.strength.value > 0, set: (on) => this.setPref('mouse', on, () => (disturbanceLook.strength.value = on ? mouseStrength : 0)) },
         { id: 'labels', label: 'Nombres de los cuerpos', key: 'L', get: () => this.labels.visible, set: (on) => (this.labels.visible = on) },
         { id: 'orbits', label: 'Órbitas', key: 'O', get: () => this.orbits.visible, set: (on) => (this.orbits.visible = on) },
+        { id: 'sound', label: 'Sonido ambiente', key: 'M', get: () => this.sound.enabled, set: (on) => this.setSound(on) },
       ],
       onSelectBody: (id) => this.focus(this.byId(id)!),
       events: {
@@ -161,12 +165,18 @@ export class Engine {
       onToggleOrbits: () => (this.orbits.visible = !this.orbits.visible),
       onToggleLabels: () => (this.labels.visible = !this.labels.visible),
       onToggleFly: () => this.toggleFly(),
+      onToggleSound: () => this.setSound(!this.sound.enabled, true),
       onLand: () => this.land(),
       onAscend: () => this.orbit.ascend(),
       onInfo: () => undefined,
     });
     // Preferencias guardadas de la interfaz.
     if (this.getPref('meter') === false) hudEl.classList.add('no-perf');
+    this.sound = new Soundscape(this.getPref('sound') !== false);
+    // El navegador solo deja sonar tras un gesto: el primero que llegue lo arranca.
+    const unlock = () => this.sound.unlock();
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
     if (this.getPref('mouse') === false) disturbanceLook.strength.value = 0;
     this.quality.onChange((p, reason) => {
       if (reason === 'auto') this.hud.toasts.show(`Calidad ajustada a ${p.name} para ir más fluido`, 'settings', 4.5);
@@ -389,6 +399,12 @@ export class Engine {
     this.flying = false;
   }
 
+  /** Activa o silencia el sonido; con `notify`, lo cuenta un aviso. */
+  private setSound(on: boolean, notify = false): void {
+    this.setPref('sound', on, () => this.sound.setEnabled(on));
+    if (notify) this.hud.toasts.show(on ? 'Sonido activado' : 'Sonido silenciado · M para volver a oírlo', on ? 'sound' : 'muted', 2.2);
+  }
+
   private getPref(key: string): boolean | null {
     try {
       const v = localStorage.getItem(`particles.${key}`);
@@ -489,6 +505,7 @@ export class Engine {
       else if (key === 'l') this.labels.visible = !this.labels.visible;
       else if (key === 't' && !this.flying) this.orbit.altitudeKm < this.orbit.focus.data.radiusKm * NEAR_GROUND_RADII ? this.orbit.ascend() : this.land();
       else if (key === 'v') this.toggleFly();
+      else if (key === 'm') this.setSound(!this.sound.enabled, true);
       else return;
       e.preventDefault();
     });
@@ -555,6 +572,7 @@ export class Engine {
     const altitudeKm = this.flying ? this.fly.altitudeKm : this.orbit.altitudeKm;
     const earth = this.byId('earth');
     const km = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+    this.updateSound(focus, altitudeKm);
     this.hud.render({
       focusId: focus.data.id,
       focusName: focus.data.name,
@@ -567,7 +585,7 @@ export class Engine {
       earthDistanceKm: earth ? km(focus.positionKm, earth.positionKm) : 0,
       cameraDistanceKm: altitudeKm + focus.data.radiusKm,
       time: { date: this.clock.date, rateIndex: this.clock.rateIndex, paused: this.clock.paused },
-      tools: { scale: this.scale.mode, orbits: this.orbits.visible, labels: this.labels.visible, flying: this.flying },
+      tools: { scale: this.scale.mode, orbits: this.orbits.visible, labels: this.labels.visible, flying: this.flying, sound: this.sound.enabled },
       travel: travel && {
         name: travel.to.data.name,
         progress: travel.progress,
@@ -579,6 +597,29 @@ export class Engine {
       backend: this.isWebGLFallback ? 'WebGL2' : 'WebGPU',
     }, now);
   };
+
+  /** Lo que suena (§13): el gigante que más se ve, el Sol, el viento del cuerpo y el warp. */
+  private updateSound(focus: CelestialBody, altitudeKm: number): void {
+    const cam = this.origin.cameraScene;
+    const angular = (b: CelestialBody) => {
+      const d = Math.hypot(b.sceneD.x - cam.x, b.sceneD.y - cam.y, b.sceneD.z - cam.z);
+      return Math.asin(Math.min(1, b.sceneRadius / Math.max(d, b.sceneRadius)));
+    };
+    let giant: { id: BodyId; angularRadius: number } | null = null;
+    for (const b of this.bodies) {
+      if (b.data.kind !== 'gas') continue;
+      const a = angular(b);
+      if (!giant || a > giant.angularRadius) giant = { id: b.data.id, angularRadius: a };
+    }
+    this.sound.update({
+      giant,
+      sunAngularRadius: angular(this.bodies[0]),
+      focusId: focus.data.id,
+      altitudeKm,
+      radiusKm: focus.data.radiusKm,
+      warp: warpLook.amount.value,
+    });
+  }
 
   /** Warp de los viajes (§10) y un ligero aumento del campo de visión en su punto álgido. */
   private updateWarp(): void {

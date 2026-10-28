@@ -34,6 +34,7 @@ export function createDebugGui({ renderer, bloom, bodies }: DebugTargets): GUI {
   look.add(bloom.radius, 'value', 0, 1, 0.01).name('bloom radio');
   look.add(sunLook.brightness, 'value', 0.5, 12, 0.1).name('sol brillo');
   look.add(sunLook.corona, 'value', 0, 0.3, 0.005).name('corona');
+  look.add(sunLook.prominences, 'value', 0, 5, 0.05).name('protuberancias');
   look.add(rockyLook.nightLights, 'value', 0, 8, 0.1).name('luces nocturnas');
   look.add(rockyLook.specular, 'value', 0, 4, 0.05).name('reflejo agua');
   look.add(rockyLook.ambient, 'value', 0, 0.1, 0.001).name('ambiente');
@@ -56,6 +57,7 @@ export function createDebugGui({ renderer, bloom, bodies }: DebugTargets): GUI {
   const system = gui.addFolder('Sistema');
   system.add(gasLook.flow, 'value', 0, 5, 0.05).name('gigantes · flujo');
   system.add(gasLook.ballShading, 'value', 0, 1, 0.01).name('gigantes · bola');
+  system.add(gasLook.haze, 'value', 0, 1.5, 0.01).name('gigantes · bruma');
   system.add(ringLook.brightness, 'value', 0, 3, 0.01).name('anillos brillo');
   system.add(beltLook.brightness, 'value', 0, 2, 0.01).name('asteroides brillo');
   system.add(orbitLook.brightness, 'value', 0, 3, 0.01).name('órbitas brillo');

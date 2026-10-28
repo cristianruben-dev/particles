@@ -11,6 +11,10 @@
  *   entera, sin deshacerse en una raya), con un anillo de cizalla en el borde.
  * El flujo usa tiempo real con velocidades artísticas (como la granulación del Sol): el
  * real es tan lento que no se vería.
+ *
+ * Entre los puntos hay aire, como en todo el sistema; para que de cerca no se vea negro entre
+ * ellos (grano), detrás va una bruma: una de cada seis partículas como un disco grande, suave
+ * y tenue con el mismo color, que solo asoma por los huecos.
  */
 import * as THREE from 'three/webgpu';
 import {
@@ -35,7 +39,19 @@ import type { Node } from 'three/webgpu';
 import type { BodyData } from '../astro/bodies';
 import { bakeSphere } from '../particles/bake';
 import { Disturbance } from '../particles/Disturbance';
-import { ball, ballDepth, ballSprite, frontFacing, hardDisc, viewDirection, worldNormal, type Vec3Node } from '../particles/nodes';
+import {
+  ball,
+  ballDepth,
+  ballSprite,
+  frontFacing,
+  hardDisc,
+  particleScale,
+  softDisc,
+  viewDirection,
+  worldNormal,
+  type FloatNode,
+  type Vec3Node,
+} from '../particles/nodes';
 import { ParticleField } from '../particles/ParticleField';
 import type { ScaleSystem } from '../scale/ScaleSystem';
 import { Atmosphere } from './Atmosphere';
@@ -53,16 +69,29 @@ export const gasLook = {
   overlap: 0.9,
   /** Cuánto se nota la bola de cada partícula (rocosos: `rockyLook.ballShading`). */
   ballShading: uniform(0.55),
+  /** Brillo de la bruma de detrás de los puntos respecto a ellos (0 = negro entre puntos). */
+  haze: uniform(0.5),
 };
+
+/** Bruma: una de cada `HAZE_EVERY` partículas, con discos de `HAZE_OVERLAP` separaciones. */
+const HAZE_EVERY = 6;
+const HAZE_OVERLAP = 3;
 
 const DEG = Math.PI / 180;
 
 /** Nitidez del borde entre bandas: más = bandas más rígidas y bordes más estrechos. */
 const BAND_EDGE = 10;
 
+/** Latitudes (rad) entre las que el flujo se apaga hacia el polo. */
+function calmRange(preset: GasPreset): [number, number] {
+  const end = preset.flow.calm !== undefined ? preset.flow.calm * DEG : 1.4;
+  return [Math.min(1.05, end - 0.2), end];
+}
+
 /** Velocidad angular de la banda (rad/s) a una latitud (rad): bloques alternos, en calma cerca de los polos. */
 function bandOmega(lat: number, preset: GasPreset): number {
-  const polar = 1 - THREE.MathUtils.smoothstep(Math.abs(lat), 1.05, 1.4);
+  const [calm0, calm1] = calmRange(preset);
+  const polar = 1 - THREE.MathUtils.smoothstep(Math.abs(lat), calm0, calm1);
   return Math.tanh(BAND_EDGE * Math.cos(lat * preset.flow.jets * 2)) * polar * preset.flow.speed;
 }
 
@@ -103,8 +132,9 @@ export class GasGiant extends BaseBody {
       rings = new Rings(tier, this.data, p.rings, ringCount, this.scale, this.sunDirection, this.objectScale, direction);
     }
 
-    const globe = this.createGlobe(tier, baked.directions, color, rings);
+    const { globe, haze } = this.createGlobe(tier, baked.directions, color, rings);
     tier.addField(globe, true);
+    tier.addField(haze, true, 1 / HAZE_EVERY);
     tier.total = count;
 
     const atmosphere = new Atmosphere(
@@ -146,13 +176,47 @@ export class GasGiant extends BaseBody {
         g = (c0.g + (c1.g - c0.g) * f) * k;
         b = (c0.b + (c1.b - c0.b) * f) * k;
       }
+      [r, g, b] = this.features(directions, i, r, g, b);
       const gain = this.preset.gain;
       out[i * 4] = r * gain; out[i * 4 + 1] = g * gain; out[i * 4 + 2] = b * gain;
     }
     return out;
   }
 
-  private createGlobe(tier: DetailTier, directions: Float32Array, color: Float32Array, rings: Rings | null): ParticleField {
+  /** Manchas de color y hexágono polar (en el marco del cuerpo: giran con él). */
+  private features(directions: Float32Array, i: number, r: number, g: number, b: number): [number, number, number] {
+    const p = this.preset;
+    if (!p.spots && !p.hexagon) return [r, g, b];
+    const x = directions[i * 4], y = directions[i * 4 + 1], z = directions[i * 4 + 2];
+    const lat = Math.asin(Math.min(1, Math.max(-1, y))), lon = Math.atan2(-z, x);
+    const blend = (c: THREE.Color, k: number) => {
+      r += (c.r - r) * k; g += (c.g - g) * k; b += (c.b - b) * k;
+    };
+    for (const s of p.spots ?? []) {
+      let dLon = lon - s.lon * DEG;
+      dLon -= Math.round(dLon / (2 * Math.PI)) * 2 * Math.PI;
+      const e = (dLon * Math.cos(s.lat * DEG) / (s.width * DEG)) ** 2 + ((lat - s.lat * DEG) / (s.height * DEG)) ** 2;
+      if (e < 1) blend(new THREE.Color(s.color), 1 - THREE.MathUtils.smoothstep(e, 0.45, 1));
+    }
+    const h = p.hexagon;
+    if (h && lat > (h.lat - 8) * DEG) {
+      // Distancia "hexagonal" al polo: la mayor proyección sobre las normales de los seis lados.
+      const colat = Math.PI / 2 - lat, a = lon - h.rotation * DEG;
+      const px = colat * Math.cos(a), py = colat * Math.sin(a);
+      let d = 0;
+      for (let k = 0; k < 6; k++) {
+        const n = (k * 60 + 30) * DEG;
+        d = Math.max(d, px * Math.cos(n) + py * Math.sin(n));
+      }
+      const apothem = (90 - h.lat) * DEG;
+      blend(new THREE.Color(h.inside), 0.85 * (1 - THREE.MathUtils.smoothstep(d, apothem - 0.5 * DEG, apothem + 0.5 * DEG)));
+      blend(new THREE.Color(h.jet), 0.75 * (1 - THREE.MathUtils.smoothstep(Math.abs(d - apothem), 0, 1.3 * DEG)));
+      blend(new THREE.Color(h.eye), 1 - THREE.MathUtils.smoothstep(colat, 1.2 * DEG, 3 * DEG));
+    }
+    return [r, g, b];
+  }
+
+  private createGlobe(tier: DetailTier, directions: Float32Array, color: Float32Array, rings: Rings | null): { globe: ParticleField; haze: ParticleField } {
     const count = directions.length / 4;
     const full = tier.kind === 'full';
     // Estado: dirección actual (xyz) + aleatorio (w). En la vista previa no se mueve.
@@ -202,18 +266,34 @@ export class GasGiant extends BaseBody {
     const mu = max(n.dot(viewDirection(center)), 0);
     const limb = float(0.55).add(mu.pow(0.5).mul(0.45));
     const occlusion = mix(float(1), float(0.5).add(b.facing.mul(0.5)), ballAmount);
-    let rgb = colorAttr.xyz.mul(lit.add(rockyLook.ambient)).mul(limb).mul(occlusion).mul(rockyLook.dotGain);
+    const rgb = colorAttr.xyz.mul(lit.add(rockyLook.ambient)).mul(limb).mul(occlusion).mul(rockyLook.dotGain);
+    const shade = this.shadows(restOf(stateAttr), rings);
+    material.colorNode = vec4(rgb.mul(shade), 1);
 
+    // Bruma de detrás: el mismo color con la luz plana, en discos grandes y suaves un poco por
+    // debajo. Sin escribir profundidad: los puntos la tapan y solo asoma entre ellos.
+    const haze = new ParticleField(count, 'translucent', HAZE_OVERLAP);
+    const hazeCenter = this.condense(restOf(stateAttr).mul(0.996), stateAttr.w, tier.appear);
+    const hm = haze.material;
+    hm.positionNode = hazeCenter;
+    hm.scaleNode = particleScale({ center: hazeCenter, size: haze.size, minPixels: 2, objectScale: this.objectScale })
+      .mul(frontFacing(dir, hazeCenter, 0.05));
+    const hazeRgb = colorAttr.xyz.mul(planetLit.add(rockyLook.ambient)).mul(limb).mul(rockyLook.dotGain).mul(gasLook.haze);
+    hm.colorNode = vec4(hazeRgb.mul(shade), 1);
+    hm.opacityNode = softDisc().mul(0.8).mul(tier.appear);
+    return { globe: field, haze };
+  }
+
+  /** Sombra de los anillos y de las lunas (§5.3) en un punto del globo (espacio local). */
+  private shadows(local: Vec3Node, rings: Rings | null): FloatNode | Vec3Node {
+    let shade: FloatNode | Vec3Node = float(1);
     if (rings) {
       // Sombra de los anillos: el punto y el Sol en el espacio del planeta (sin el giro propio).
-      const sunLocal = this.equatorialSun();
-      const local = this.spinToBody(restOf(stateAttr));
-      rgb = rgb.mul(ringShadow(local, sunLocal, rings.bands));
+      shade = shade.mul(ringShadow(this.spinToBody(local), this.equatorialSun(), rings.bands));
     }
-    // Tránsitos de sombra (§5.3): las de las lunas, puntos negros que cruzan el disco.
-    if (this.shadow) rgb = rgb.mul(this.shadow.lightNode(modelWorldMatrix.mul(vec4(restOf(stateAttr), 0)).xyz.div(this.objectScale)));
-    material.colorNode = vec4(rgb, 1);
-    return field;
+    // Tránsitos de sombra: las de las lunas, puntos negros que cruzan el disco.
+    if (this.shadow) shade = shade.mul(this.shadow.lightNode(modelWorldMatrix.mul(vec4(local, 0)).xyz.div(this.objectScale)));
+    return shade;
   }
 
   /** Flujo de bandas y vórtices: una pasada compute por frame sobre el estado. */
@@ -234,7 +314,8 @@ export class GasGiant extends BaseBody {
       // tanh(x) = 1 − 2 / (e^{2x} + 1): la misma función que `bandOmega` en la CPU.
       const x = cos(lat.mul(p.flow.jets * 2)).mul(BAND_EDGE * 2).clamp(-30, 30);
       const band = float(1).sub(float(2).div(exp(x).add(1)));
-      const polar = smoothstep(1.4, 1.05, lat.abs());
+      const [calm0, calm1] = calmRange(p);
+      const polar = smoothstep(calm1, calm0, lat.abs());
       const omega = band.mul(polar).mul(p.flow.speed);
       const a = omega.mul(dt);
       const ca = cos(a), sa = sin(a);

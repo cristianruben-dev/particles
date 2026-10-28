@@ -10,11 +10,11 @@ import { freeStorageBuffers } from '../particles/gpu';
 import type { ParticleBuffer } from '../particles/ParticleField';
 
 export class ChunkPool {
-  /** Desplazamiento respecto al centro del chunk (xyz, radios) y aleatorio (w). */
+  /** Desplazamiento respecto al centro del chunk (xyz, radios) y lo que sube la última octava fina (w). */
   readonly offset: THREE.StorageInstancedBufferAttribute;
-  /** Albedo lineal (rgb) y agua (w). */
+  /** Albedo lineal (rgb); agua + 256 × luces nocturnas, 8 bits cada una (w). */
   readonly color: THREE.StorageInstancedBufferAttribute;
-  /** Normal del terreno en el espacio del cuerpo (xyz) y luces nocturnas (w). */
+  /** Normal del terreno en el espacio del cuerpo, con y sin la última octava (octaédricas: xy y zw). */
   readonly normal: THREE.StorageInstancedBufferAttribute;
   private readonly free: number[] = [];
 

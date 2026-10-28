@@ -28,13 +28,23 @@ export function planeFrame(raDeg: number, decDeg: number): BodyFrame {
 
 export function bodyFrame(p: PoleData, timeMs: number): BodyFrame {
   const T = julianCenturiesSinceJ2000(timeMs);
-  return planeFrame(p.ra + p.raRate * T, p.dec + p.decRate * T);
+  return planeFrame(p.ra + p.raRate * T + periodicSum(p, T, 'ra'), p.dec + p.decRate * T + periodicSum(p, T, 'dec'));
 }
 
 /** Ángulo del meridiano principal W (rad, en [0, 2π)), reducido en float64. */
 export function primeMeridian(p: PoleData, timeMs: number): number {
-  const deg = (p.w0 + p.wRate * daysSinceJ2000(timeMs)) % 360;
+  const T = julianCenturiesSinceJ2000(timeMs);
+  const deg = (p.w0 + p.wRate * daysSinceJ2000(timeMs) + periodicSum(p, T, 'w')) % 360;
   return ((deg < 0 ? deg + 360 : deg) * Math.PI) / 180;
+}
+
+/** Suma de los términos periódicos de la IAU (grados): senos en α y W, cosenos en δ. */
+function periodicSum(p: PoleData, T: number, key: 'ra' | 'dec' | 'w'): number {
+  const terms = p.periodic;
+  if (!terms) return 0;
+  const N = (terms.angle[0] + terms.angle[1] * T) * DEG;
+  const trig = key === 'dec' ? Math.cos : Math.sin;
+  return terms[key].reduce((sum, c, k) => sum + c * trig((k + 1) * N), 0);
 }
 
 export const cross3d = (a: Vec3d, b: Vec3d): Vec3d => ({

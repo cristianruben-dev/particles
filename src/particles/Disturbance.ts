@@ -7,6 +7,7 @@
  * y una pasada compute los integra cada frame, solo mientras hay algo que mover.
  */
 import * as THREE from 'three/webgpu';
+import type { Node } from 'three/webgpu';
 import { Fn, hash, instanceIndex, instancedArray, max, smoothstep, uniform, vec3, vec4 } from 'three/tsl';
 import type { FloatNode, Vec3Node } from './nodes';
 import type { ParticleBuffer } from './ParticleField';
@@ -38,6 +39,14 @@ export interface LocalRay {
   gain: number;
 }
 
+/** Para capas que no son una esfera centrada (los chunks de la superficie). */
+export interface DisturbanceOptions {
+  /** Origen del rayo para la partícula `i` (si no, el de `update`). */
+  origin?: (index: typeof instanceIndex) => Vec3Node;
+  /** Hacia fuera de la superficie en la partícula `i` (si no, la dirección de su reposo). */
+  outward?: (index: typeof instanceIndex) => Vec3Node;
+}
+
 export class Disturbance {
   private readonly offset: ParticleBuffer;
   private readonly velocity: ParticleBuffer;
@@ -53,7 +62,7 @@ export class Disturbance {
   /**
    * @param rest posición de reposo (espacio local) de la partícula `i`, leída de sus buffers.
    */
-  constructor(count: number, rest: (index: typeof instanceIndex) => Vec3Node) {
+  constructor(count: number, rest: (index: typeof instanceIndex) => Vec3Node, options: DisturbanceOptions = {}) {
     this.offset = instancedArray(count, 'vec4');
     this.velocity = instancedArray(count, 'vec4');
 
@@ -64,7 +73,7 @@ export class Disturbance {
       const p = base.add(off.xyz);
 
       // Distancia de la partícula al rayo del cursor.
-      const rel = p.sub(this.rayOrigin);
+      const rel = p.sub(options.origin ? options.origin(instanceIndex) : this.rayOrigin);
       const along = max(rel.dot(this.rayDirection), 0);
       const away = rel.sub(this.rayDirection.mul(along));
       const dist = away.length();
@@ -75,7 +84,7 @@ export class Disturbance {
       const jitter = vec3(hash(seed), hash(seed.add(7.1)), hash(seed.add(13.7))).sub(0.5).mul(2);
       const direction = away
         .div(max(dist, 1e-6))
-        .add(base.normalize().mul(0.8))
+        .add((options.outward ? options.outward(instanceIndex) : base.normalize()).mul(0.8))
         .add(jitter.mul(disturbanceLook.disorder))
         .normalize();
 
@@ -97,6 +106,11 @@ export class Disturbance {
   /** Desplazamiento actual, para sumarlo a la posición de reposo en el material. */
   offsetNode(): Vec3Node {
     return this.offset.toAttribute().xyz;
+  }
+
+  /** Desplazamiento de la partícula `index` (cuando el material no la recorre en orden). */
+  offsetAt(index: Node<'uint'>): Vec3Node {
+    return this.offset.element(index).xyz;
   }
 
   /**

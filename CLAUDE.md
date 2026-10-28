@@ -20,4 +20,8 @@ Sistema solar navegable hecho de partículas (Three.js WebGPU + TSL, TypeScript,
 - Sombras de eclipse (§5.3): la geometría va con posiciones y radios reales en km, nunca en unidades de escena, y la misma fórmula en la CPU (`sunCoverage`) y en la GPU (`bodies/Shadows.ts`).
 - Cometas: coma y colas se colocan respecto al núcleo con `distanceNode` del propio cometa (su `radiusKm` es el de referencia de la coma, §4.3).
 - `satellite.js` se importa desde `astro/sgp4.ts`, no del paquete: su índice arrastra un WebAssembly que rompe el build.
+- TSL: un `uniformArray` de vec3 leído en un compute dio NaN; para datos por hueco o por chunk en un compute, un buffer pequeño (`StorageInstancedBufferAttribute` + `needsUpdate`).
+- El tone mapping va a mano (`renderOutput`) y después el tramado (`postfx/Pipeline.ts`): sin él, el halo del Sol sale en anillos de 8 bits.
+- `src/astro/cometApparitions.ts` se genera con `node scripts/build-comet-apparitions.mjs` (JPL Horizons): no editarlo a mano.
+- Sonido (§13): procedural en `audio/` (Web Audio), arranca en el primer gesto del usuario; cada voz con su ganancia a 0 cuando no suena (un LFO no puede sonar solo).
 - Al terminar una fase, marcarla en `docs/PLAN.md`.

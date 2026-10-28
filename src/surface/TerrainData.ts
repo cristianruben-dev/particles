@@ -11,7 +11,10 @@ import type { HeightData } from './terrain';
 
 export interface TerrainSources {
   albedo?: string;
-  /** PNG/JPG en gris (8 bits) o binario crudo de 16 bits (`.u16`, little-endian). */
+  /**
+   * PNG/JPG en gris (8 bits), binario crudo de 16 bits (`.u16`, little-endian) o float16
+   * comprimido con zlib (`.f16z`, little-endian).
+   */
   height?: string;
   /** Tamaño del binario crudo. */
   heightSize?: { width: number; height: number };
@@ -39,8 +42,10 @@ export class TerrainData {
     ]);
     let heightTexture: THREE.DataTexture | null = null;
     if (height) {
-      // r32float sin filtrar: el filtrado bilineal lo hace el shader (`sampleHeightGpu`).
-      heightTexture = new THREE.DataTexture(height.data, height.width, height.height, THREE.RedFormat, THREE.FloatType);
+      // r32float (o r16float con los bits del `.f16z`, la mitad de memoria) sin filtrar: la
+      // B-spline la hace el shader (`sampleTexelsGpu`).
+      const type = height.decode ? THREE.HalfFloatType : THREE.FloatType;
+      heightTexture = new THREE.DataTexture(height.data, height.width, height.height, THREE.RedFormat, type);
       heightTexture.minFilter = heightTexture.magFilter = THREE.NearestFilter;
       heightTexture.needsUpdate = true;
     }
@@ -67,7 +72,28 @@ async function decode(url: string): Promise<{ width: number; height: number; dat
   return { width: canvas.width, height: canvas.height, data };
 }
 
+/** Bits float16 → valor (los 65.536). */
+let halfTable: Float32Array | null = null;
+function halfDecodeTable(): Float32Array {
+  if (!halfTable) {
+    halfTable = new Float32Array(65536);
+    for (let i = 0; i < 65536; i++) halfTable[i] = THREE.DataUtils.fromHalfFloat(i);
+  }
+  return halfTable;
+}
+
 async function loadHeight(url: string, size: TerrainSources['heightSize'], leftLon: number): Promise<HeightData> {
+  if (url.endsWith('.f16z')) {
+    // La CPU guarda los mismos bits que sube a la GPU y los decodifica con una tabla: la
+    // colisión lee exactamente el suelo que se dibuja, con la mitad de memoria que en float32.
+    if (!size) throw new Error(`Falta el tamaño de ${url}`);
+    const response = await fetch(url);
+    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}: ${url}`);
+    const buffer = await new Response(response.body.pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
+    const data = new Uint16Array(buffer);
+    if (data.length !== size.width * size.height) throw new Error(`Tamaño inesperado: ${url}`);
+    return { width: size.width, height: size.height, data, decode: halfDecodeTable(), leftLon };
+  }
   if (url.endsWith('.u16')) {
     if (!size) throw new Error(`Falta el tamaño de ${url}`);
     const buffer = await (await fetch(url)).arrayBuffer();

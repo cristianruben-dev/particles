@@ -28,6 +28,8 @@ export const icons = {
   eye: svg('<path d="M2.6 12S6 5.6 12 5.6 21.4 12 21.4 12 18 18.4 12 18.4 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.8"/>'),
   keyboard: svg('<rect x="2.8" y="6" width="18.4" height="12" rx="2.4"/><path d="M6.8 10h.01M10.3 10h.01M13.7 10h.01M17.2 10h.01M7.5 14h9"/>'),
   eclipse: svg(`<circle cx="10" cy="12" r="6.6"/><circle cx="14.2" cy="12" r="6.6" ${fill} opacity=".9"/>`),
+  sound: svg('<path d="M4 9.6v4.8h3.4L12 18.4V5.6L7.4 9.6z"/><path d="M15.4 9.2a4 4 0 0 1 0 5.6M17.9 6.7a7.6 7.6 0 0 1 0 10.6"/>'),
+  muted: svg('<path d="M4 9.6v4.8h3.4L12 18.4V5.6L7.4 9.6z"/><path d="M15.6 9.6l4.8 4.8M20.4 9.6l-4.8 4.8"/>'),
   sparkle: svg('<path d="M12 3.5c.5 4.3 1.9 6.9 8.5 8.5-6.6 1.6-8 4.2-8.5 8.5-.5-4.3-1.9-6.9-8.5-8.5 6.6-1.6 8-4.2 8.5-8.5z"/>'),
 } as const;
 

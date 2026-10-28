@@ -36,6 +36,7 @@ export interface HudActions extends TimeActions, TitleActions {
   onToggleOrbits(): void;
   onToggleLabels(): void;
   onToggleFly(): void;
+  onToggleSound(): void;
 }
 
 export interface HudState extends InfoLive {
@@ -93,6 +94,7 @@ export class Hud {
       onToggleOrbits: actions.onToggleOrbits,
       onToggleLabels: actions.onToggleLabels,
       onToggleFly: actions.onToggleFly,
+      onToggleSound: actions.onToggleSound,
       onEvents: () => this.toggleEvents(),
       onHelp: () => this.toggleHelp(),
       onSettings: () => this.toggleSettings(),
