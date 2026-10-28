@@ -65,6 +65,8 @@ export class Engine {
   private orbit!: OrbitMode;
   private fly!: FreeFlyMode;
   private flying = false;
+  /** «Aterrizar» pulsado durante el viaje: se ejecuta al llegar. */
+  private pendingLand = false;
   private hud!: Hud;
   private labels!: Labels;
   private orbits!: OrbitLines;
@@ -183,6 +185,7 @@ export class Engine {
 
   focus(body: CelestialBody): void {
     if (this.flying) this.exitFly();
+    this.pendingLand = false;
     this.setReference(body);
     this.orbit.focusOn(body, this.rig);
     this.hud.coach.dismiss();
@@ -191,6 +194,8 @@ export class Engine {
   /** La pantalla de carga se ha ido: entra la interfaz. */
   revealed(): void {
     this.hud.reveal();
+    // Lo medido detrás del telón (horneados, subida de buffers) no cuenta para la calidad.
+    this.quality.restartMeasure();
   }
 
   /** Cuerpo de referencia: el enfocado en órbita o el ancla en vuelo libre. */
@@ -207,7 +212,16 @@ export class Engine {
   /** Aterriza en el lugar destacado del cuerpo enfocado (o bajo la cámara). */
   land(): void {
     const body = this.orbit.focus;
-    if (!body.landable || this.orbit.inTransition) return;
+    if (!body.landable || this.flying) {
+      this.pendingLand = false;
+      return;
+    }
+    // A mitad de viaje: se aterriza al llegar.
+    if (this.orbit.inTransition) {
+      this.pendingLand = true;
+      return;
+    }
+    this.pendingLand = false;
     const site = FACTS[body.data.id].site;
     if (site) {
       // En la superficie el tiempo va despacio: si no, el Sol cruza el cielo en segundos.
@@ -215,7 +229,7 @@ export class Engine {
       if (slowed) this.clock.rateIndex = 1;
       const hours = this.morningAt(body, site);
       const notes = [hours !== 0 ? `el reloj avanza ${formatHours(hours)} para llegar de día` : '', slowed ? 'tiempo a 1 min/s' : ''].filter(Boolean);
-      if (notes.length) this.hud.toasts.show(`Rumbo a ${site.name} · ${notes.join(' · ')}`, 'land', 5);
+      if (notes.length) this.hud.toasts.show(`Aterrizando en ${site.name} · ${notes.join(' · ')}`, 'land', 5);
     }
     this.orbit.land(site);
     this.hud.coach.dismiss();
@@ -400,6 +414,7 @@ export class Engine {
     this.scale.update(dt);
     layoutSystem(this.bodies, this.clock.timeMs, this.scale);
     for (const body of this.bodies) body.orient(this.clock.timeMs);
+    if (this.pendingLand && !this.flying && !this.orbit.inTransition) this.land();
     this.rig.update(dt);
     this.updateWarp();
 
@@ -450,7 +465,7 @@ export class Engine {
       speedKmS: this.flying ? this.fly.speedKmS : null,
       landable: focus.landable,
       nearGround: altitudeKm < focus.data.radiusKm * NEAR_GROUND_RADII,
-      descending: !this.flying && this.orbit.descending,
+      descending: !this.flying && (this.orbit.descending || this.pendingLand),
       sunDistanceKm: Math.hypot(focus.positionKm.x, focus.positionKm.y, focus.positionKm.z),
       earthDistanceKm: earth ? km(focus.positionKm, earth.positionKm) : 0,
       cameraDistanceKm: altitudeKm + focus.data.radiusKm,

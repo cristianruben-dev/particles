@@ -159,6 +159,14 @@ export class Quality {
     this.apply(choice === 'auto' ? this.device.recommended : choice, 'user');
   }
 
+  /** Vuelve a esperar antes de medir (al levantarse la pantalla de carga). */
+  restartMeasure(): void {
+    this.samples = [];
+    this.windowSeconds = 0;
+    this.slowWindows = 0;
+    this.settle = SETTLE_SECONDS;
+  }
+
   /**
    * Una muestra por frame del bucle real (requestAnimationFrame). Devuelve true si ha
    * bajado de nivel.

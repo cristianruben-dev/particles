@@ -3,6 +3,7 @@ import '@fontsource-variable/geist-mono';
 import '@fontsource/instrument-serif/latin.css';
 import '@fontsource/instrument-serif/latin-ext.css';
 import './style.css';
+import { nameInText } from './astro/facts';
 import { BaseBody } from './bodies/BaseBody';
 import { config } from './config';
 import { Engine } from './core/Engine';
@@ -39,7 +40,7 @@ try {
 }
 
 let formed = 0;
-await Promise.all(engine.bodies.map((b) => b.ready.then(() => loader?.set(0.16 + 0.74 * (++formed / engine.bodies.length), `Formando ${b.data.name}…`))));
+await Promise.all(engine.bodies.map((b) => b.ready.then(() => loader?.set(0.16 + 0.74 * (++formed / engine.bodies.length), `Formando ${nameInText(b.data.id, b.data.name)}…`))));
 loader?.set(0.93, 'Encendiendo las estrellas…');
 await engine.starsReady;
 // Unos frames para compilar los shaders antes de levantar el telón, y un mínimo de tiempo

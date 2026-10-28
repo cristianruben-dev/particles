@@ -1604,6 +1604,14 @@ kbd {
   }
 }
 
+/* Sin teclado no hay forma de moverse en vuelo libre. */
+@media (pointer: coarse) {
+  .ui-fly-toggle,
+  .ui-fly-toggle + .ui-sep {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

@@ -40,6 +40,16 @@ export interface BodyFacts {
 
 const fromGM = (gm: number) => (gm * 1e9) / G;
 
+/** Nombre con artículo para el texto corrido: «el Sol», «la Tierra», «la Luna», «Marte». */
+export function nameInText(id: BodyId, name: string): string {
+  return id === 'sun' ? `el ${name}` : id === 'earth' || id === 'moon' ? `la ${name}` : name;
+}
+
+/** «de» + nombre, con la contracción: «del Sol», «de la Tierra», «de Júpiter». */
+export function ofName(id: BodyId, name: string): string {
+  return id === 'sun' ? `del ${name}` : `de ${nameInText(id, name)}`;
+}
+
 export const FACTS: Record<BodyId, BodyFacts> = {
   sun: {
     type: 'Estrella', massKg: 1.9885e30, meanTempC: 5772 - 273.15,

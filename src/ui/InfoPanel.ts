@@ -3,7 +3,7 @@
  * la superficie. Ver docs/ARQUITECTURA.md §11 y las fuentes en `astro/facts.ts`.
  */
 import { BODIES, type BodyId } from '../astro/bodies';
-import { FACTS, G } from '../astro/facts';
+import { FACTS, G, ofName } from '../astro/facts';
 import { el, iconButton, setText } from './dom';
 import { formatDistance, formatDuration, lightTime, scientific } from './format';
 import { icons } from './icons';
@@ -21,7 +21,7 @@ export interface InfoLive {
 export function bodyKicker(id: BodyId): string {
   const data = BODIES[id];
   const facts = FACTS[id];
-  if (data.parent && data.parent !== 'sun') return `${facts.type} de ${BODIES[data.parent].name}`;
+  if (data.parent && data.parent !== 'sun') return `${facts.type} ${ofName(data.parent, BODIES[data.parent].name)}`;
   const order = ['mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune'].indexOf(id);
   return order >= 0 ? `${facts.type} · ${order + 1}.º planeta` : facts.type;
 }
@@ -120,7 +120,7 @@ export class InfoPanel {
       ['Velocidad de escape', `${num(escape, 1)} km/s`],
       ['Rotación', formatDuration(Math.abs(rotation)), data.tidallyLocked ? 'síncrona' : rotation < 0 ? 'retrógrada' : undefined],
     ];
-    if (period !== null) rows.push(['Órbita', formatDuration(period * 24), data.parent && data.parent !== 'sun' ? `alrededor de ${BODIES[data.parent].name}` : undefined]);
+    if (period !== null) rows.push(['Órbita', formatDuration(period * 24), data.parent && data.parent !== 'sun' ? `alrededor ${ofName(data.parent, BODIES[data.parent].name)}` : 'alrededor del Sol']);
     rows.push(['Inclinación del eje', `${num(data.axialTiltDeg, 1)}°`]);
     if (facts.meanTempC !== undefined) rows.push([id === 'sun' ? 'Temperatura de la superficie' : 'Temperatura media', `${num(facts.meanTempC, 0)} °C`]);
     if (facts.pressureBar !== undefined) rows.push(['Presión en superficie', formatPressure(facts.pressureBar)]);

@@ -239,7 +239,7 @@ Entre las partículas del terreno hay aire (el estilo del proyecto): por los hue
 
 ### 7.5 Pendiente
 
-- Corregido en la fase 4: el horizonte con el que se descartan nodos se calcula sobre el **suelo más bajo posible** (`1 − relieve·referencia − ruido`), no sobre el radio medio. Dentro de Valles Marineris la cámara está por debajo del radio medio y el horizonte salía cero: solo quedaban 33 chunks gruesos y se veía el fondo.
+- Corregido en la fase 4: el horizonte con el que se descartan nodos se calcula sobre el radio medio o, si el suelo bajo la cámara está más bajo, sobre ese suelo. Dentro de Valles Marineris la cámara está por debajo del radio medio y el horizonte salía cero: solo quedaban 33 chunks gruesos y se veía el fondo. Medido a 10 m (1024×768, calidad alta): sin cambios fuera de los cañones (Tierra: 0 huecos en reposo y 360–367 chunks con el cálculo viejo y el nuevo).
 
 - **Gigantes gaseosos**: bajar entre capas de nubes (fase 4). De momento la cámara se queda sobre la cima de las nubes.
 - Patrón de mosaico de la tesela de ruido azul en algunos ángulos, y bordes de chunk con un ligero cambio de textura (las octavas finas que tiene cada nivel).

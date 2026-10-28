@@ -151,8 +151,6 @@ export class Surface {
   private readonly chunks = new Set<SurfaceChunk>();
   private readonly coarse: number[];
   private readonly maxRelief: number;
-  /** Radio del suelo más bajo posible (radios): fondo de cañones y cuencas, como Hellas. */
-  private readonly floor: number;
 
   private readonly jobData: Float32Array;
   private readonly jobs: THREE.StorageInstancedBufferAttribute;
@@ -172,7 +170,6 @@ export class Surface {
     // Altura máxima posible (radios): margen del horizonte y de los límites de los nodos.
     const noiseMax = this.coarse.reduce((a, km) => a + km, 0) / params.radiusKm * params.roughness * 2;
     this.maxRelief = params.relief * (1 - params.reference) + noiseMax;
-    this.floor = 1 - params.relief * params.reference - noiseMax;
 
     this.jobData = new Float32Array(JOBS * JOB_STRIDE * 4);
     this.jobs = new THREE.StorageInstancedBufferAttribute(this.jobData, 4);
@@ -200,9 +197,9 @@ export class Surface {
     const cam = view.cameraLocal;
     const camDist = cam.length();
     const camDir = cam.clone().divideScalar(camDist);
-    // Horizonte sobre la esfera del suelo más bajo: dentro de Valles Marineris la cámara puede
-    // estar por debajo del radio medio y el horizonte del radio medio sería cero.
-    const floor = this.floor;
+    // Horizonte sobre la esfera del radio medio o, si el suelo de debajo es más bajo (dentro
+    // de Valles Marineris la cámara está por debajo del radio medio), sobre la de ese suelo.
+    const floor = Math.min(1, 1 + this.heightAt(camDir));
     const camHorizon = Math.acos(Math.min(1, floor / Math.max(camDist, floor)));
     const center = new THREE.Vector3();
 

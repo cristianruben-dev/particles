@@ -170,7 +170,7 @@ export abstract class BaseBody implements CelestialBody {
       preview.appear.value = Math.min(1, preview.appear.value + ctx.dt / APPEAR_SECONDS);
     }
     if (full) {
-      if (full.appear.value < 1) full.appear.value = Math.min(1, full.appear.value + ctx.dt / UPGRADE_SECONDS);
+      if (full.appear.value < 1 && !BaseBody.formationHeld) full.appear.value = Math.min(1, full.appear.value + ctx.dt / UPGRADE_SECONDS);
       preview?.setVisible(full.appear.value < 1);
 
       // Lejos y sin foco durante un rato: se libera el detalle completo.

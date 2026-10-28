@@ -124,7 +124,11 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 - Vuelo libre: de 14.000 km a 8 m sobre la Tierra manteniendo W (12 s, sin posiciones no finitas, plano cercano siempre delante); la colisión mantiene los 8 m con turbo contra el suelo; salir con Esc deja la órbita a 10 m en el marco del cuerpo. Anclado a la Luna, ida y vuelta a la escala real sin moverse (5.729 km del centro en todo momento).
 - Aterrizaje en Marte con el reloj adelantado 10 h hasta la mañana de Valles Marineris.
 
+- Superficie a 10 m tras el arreglo del horizonte (1024×768, calidad alta, panel del navegador visible): 0 huecos en reposo en la Tierra (367 chunks), la Luna (321) y Marte (415). Con un giro de 180° suavizado, hasta 100–136 huecos durante 3–5 frames; con el cálculo del horizonte de la fase 3 sale lo mismo en la Tierra (105 durante 4), así que la diferencia con las cifras de la fase 3 es del método (giro y ventana distintos), no una regresión.
+- La interfaz no cuesta fps: 22,7 con paneles de cristal, 22,0 sin desenfoque y 22,0 sin interfaz (a 10 m, 2,8M partículas, en el panel emulado); el bucle de la CPU tarda 0,7 ms por frame.
+
 **Pendientes detectados en la fase 4:**
+- **Rendimiento a ras de suelo, sin medir de verdad:** en el panel del navegador (emulando 1024×768 a 2×) salieron 22 fps a 10 m del suelo, y con calidad media o baja apenas sube (28–30, ¿tope del panel?). Hay que leerlo en el medidor con la ventana delante; si se confirma, el cuello está en los vértices (2,5M sprites × 4) y no en el relleno: el perfil bajo debería recortar partículas de la superficie, no solo resolución.
 - El warp se ha visto solo en capturas pequeñas: falta mirarlo a pantalla completa (intensidad de las estelas).
 - La interfaz en móvil está maquetada pero sin probar en un teléfono (táctil; el vuelo libre necesita teclado).
 

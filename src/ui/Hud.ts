@@ -204,12 +204,15 @@ export class Hud {
     this.settings.update({ particles: s.particles, pixelRatio: s.pixelRatio, backend: s.backend, fps: s.stats.fps, frameMs: s.stats.frameMs }, now);
   }
 
+  /** La ficha y los ajustes comparten el lado derecho: abrir uno cierra el otro. */
   private toggleInfo(): void {
     this.info.setOpen(!this.info.open);
+    if (this.info.open) this.settings.setOpen(false);
   }
 
   private toggleSettings(): void {
     this.settings.setOpen(!this.settings.open);
+    if (this.settings.open) this.info.setOpen(false);
   }
 
   private toggleHelp(): void {
