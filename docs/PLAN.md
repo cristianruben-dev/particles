@@ -2,7 +2,7 @@
 
 Cuatro fases. Cada una termina en algo que se puede abrir en el navegador y disfrutar. Cada fase tiene un **criterio de "hecho"** comprobable: no se pasa a la siguiente hasta cumplirlo.
 
-Estado: **Fase 3 implementada** (salvo el descenso entre nubes de los gigantes, que pasa a la fase 4). Quedan por comprobar con la ventana delante los 60 fps (fases 1–3) y que nada tiemble en escala real. Después: Fase 4.
+Estado: **Fase 4 en curso**: perfiles de calidad, medidor de fps, interfaz nueva, ficha, aterrizaje, vuelo libre, warp y pantalla de carga hechos. Quedan el despliegue, el descenso entre nubes de los gigantes y el sonido (opcional), y comprobar con la ventana delante los 60 fps (el medidor del HUD ya lo permite) y que nada tiemble en escala real.
 
 ---
 
@@ -105,18 +105,28 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 
 ---
 
-## Fase 4 — Pulido y experiencia
+## Fase 4 — Pulido y experiencia (en curso)
 
-1. `FreeFlyMode` 6DOF con velocidad adaptativa.
-1b. Gigantes gaseosos: descenso entre capas de nubes volumétricas (aplazado de la fase 3).
-2. Efecto *warp* en viajes.
-3. Panel de información completo por cuerpo.
-4. Sonido ambiente (opcional; zumbido grave cerca de los gigantes, silencio en el vacío).
-5. Rendimiento: perfiles de calidad (baja/media/alta/ultra) y detección del backend.
-6. Pantalla de carga con el sistema "formándose" desde el polvo.
-7. Despliegue estático (Vercel, Netlify o GitHub Pages).
+1. [x] `FreeFlyMode` 6DOF con velocidad adaptativa, anclado al cuerpo más cercano, colisión con el relieve y nivelación del horizonte (§9).
+1b. [ ] Gigantes gaseosos: descenso entre capas de nubes volumétricas (aplazado de la fase 3).
+2. [x] Efecto *warp* en los viajes (§10).
+3. [x] Ficha completa por cuerpo con datos de NASA y JPL, distancias en vivo y botón de aterrizar en un lugar conocido (§11).
+4. [ ] Sonido ambiente (opcional; zumbido grave cerca de los gigantes, silencio en el vacío).
+5. [x] Rendimiento: perfiles de calidad (baja/media/alta/ultra), detección del equipo, ajuste automático y medidor de fps con gráfica (§12).
+6. [x] Pantalla de carga con el sistema "formándose" desde el polvo (§11).
+7. [ ] Despliegue estático (Vercel, Netlify o GitHub Pages).
+8. [x] Extra: interfaz rediseñada entera (título, tiempo, navegador de cuerpos, herramientas, ajustes, ayuda, avisos y pista de bienvenida), con atajos nuevos (`T` aterrizar, `V` vuelo, `I` ficha, `U` ocultar, `?` ayuda).
 
 **Hecho cuando:** una persona que no conoce el proyecto lo abre, explora sin instrucciones y aterriza en Marte.
+- [~] El camino existe sin instrucciones: la pista de bienvenida explica arrastrar, rueda y clic; Marte está en el navegador de abajo; el botón **Aterrizar** del título baja a Valles Marineris, de día (verificado: 5 km sobre el suelo, superficie completa, 0 huecos, cañón y cielo de polvo a la vista). Falta probarlo con alguien de verdad.
+
+**Verificaciones de la fase 4:**
+- Vuelo libre: de 14.000 km a 8 m sobre la Tierra manteniendo W (12 s, sin posiciones no finitas, plano cercano siempre delante); la colisión mantiene los 8 m con turbo contra el suelo; salir con Esc deja la órbita a 10 m en el marco del cuerpo. Anclado a la Luna, ida y vuelta a la escala real sin moverse (5.729 km del centro en todo momento).
+- Aterrizaje en Marte con el reloj adelantado 10 h hasta la mañana de Valles Marineris.
+
+**Pendientes detectados en la fase 4:**
+- El warp se ha visto solo en capturas pequeñas: falta mirarlo a pantalla completa (intensidad de las estelas).
+- La interfaz en móvil está maquetada pero sin probar en un teléfono (táctil; el vuelo libre necesita teclado).
 
 ---
 

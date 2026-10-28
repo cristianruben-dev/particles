@@ -1284,7 +1284,7 @@ kbd {
 
 .ui-help-cols {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1.15fr 1fr 1fr;
   gap: 28px;
   margin-top: 16px;
 }
@@ -1301,11 +1301,18 @@ kbd {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
+  max-width: 128px;
 }
 
 .ui-help-col dt kbd {
+  height: auto;
+  min-height: 1.9em;
+  padding: 3px 7px;
   font-family: var(--font-ui);
   font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
 }
 
 .ui-help-col dd {

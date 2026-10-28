@@ -15,4 +15,6 @@ Sistema solar navegable hecho de partículas (Three.js WebGPU + TSL, TypeScript,
 - Partículas que se colocan en la GPU a partir de km (anillos, asteroides, órbitas) pasan a escena con `ScaleSystem.distanceNode`, nunca con su propia fórmula.
 - TSL: una expresión compartida se declara en el primer bloque donde se usa; si ese bloque es un `If`, fuera vale 0. Usar `.toVar()` antes de los `If`, o `select` y máscaras en vez de `If`.
 - Superficie (§7.2): nada de coordenadas absolutas en float32 a escala de metros. Parte entera y fracción por separado, valores relativos al centro del chunk (float64 en la CPU) y nunca restar dos números casi iguales. Cualquier cambio en `surface/terrain.ts` va en la CPU y en la GPU a la vez.
+- La cámara (órbita y vuelo libre) se guarda respecto a su cuerpo de referencia en km; de escena a km, solo `ScaleSystem.inverseLocalDistance` (§9).
+- Interfaz (§11): componentes sin framework en `ui/`, cifras con `setText` (solo si cambian), acento `--body`. Para mirarla con el panel pequeño: `?quality=alta` (sin ajuste automático) y ampliar por zonas con `transform: scale(s) translate(-x, -y)` en `<html>`.
 - Al terminar una fase, marcarla en `docs/PLAN.md`.

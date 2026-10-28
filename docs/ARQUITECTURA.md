@@ -239,6 +239,8 @@ Entre las partículas del terreno hay aire (el estilo del proyecto): por los hue
 
 ### 7.5 Pendiente
 
+- Corregido en la fase 4: el horizonte con el que se descartan nodos se calcula sobre el **suelo más bajo posible** (`1 − relieve·referencia − ruido`), no sobre el radio medio. Dentro de Valles Marineris la cámara está por debajo del radio medio y el horizonte salía cero: solo quedaban 33 chunks gruesos y se veía el fondo.
+
 - **Gigantes gaseosos**: bajar entre capas de nubes (fase 4). De momento la cámara se queda sobre la cima de las nubes.
 - Patrón de mosaico de la tesela de ruido azul en algunos ángulos, y bordes de chunk con un ligero cambio de textura (las octavas finas que tiene cada nivel).
 - Tierra: el mapa de alturas es de 8 bits y 4k (10 km por texel); por debajo de eso todo es ruido procedural.
@@ -266,23 +268,37 @@ Todos implementan `CelestialBody` (`bodies/CelestialBody.ts`): `update(ctx)`, `s
 - **`OrbitMode`** ✅: arrastrar para girar alrededor del cuerpo enfocado y rueda para acercarse. El zoom es multiplicativo sobre la **altitud sobre el suelo** (km): con terreno por debajo del radio medio (cráteres, Hellas) la distancia al centro no sirve. La distancia al centro es radio + suelo bajo la cámara (`groundHeightKm`, la misma función que dibuja los chunks, con todo el detalle) + altitud, y pasa a escena con `localDistance` del cuerpo enfocado (§4.3). Mínimo: 10 m sobre el suelo en los cuerpos con superficie, 4 % del radio en el resto.
 - **A ras de suelo** ✅: por debajo de 0,1 radios la cámara pasa al marco del cuerpo (gira con él: a 10 min/s la Tierra se desplazaría ~70 m por frame bajo los pies) y la mirada se inclina hacia el horizonte con la altitud (escala logarítmica entre 0,05 radios y 3·10⁻⁶), con la vertical del lugar como "arriba". Arrastrar con el botón derecho (o con Mayús) cambia el rumbo y la inclinación; el arrastre normal mueve unos centímetros por píxel a 10 m. La orientación de los cuerpos se calcula antes que la cámara: si no, el suelo se medía con el giro del frame anterior y la cámara quedaba cientos de metros por encima o por debajo.
 - **Viaje entre cuerpos** ✅ (en `OrbitMode.focusOn`, no en un modo aparte): dura de 2,4 a 5,5 s según cuánto cambia la escala; la distancia se interpola en escala logarítmica; la dirección gira (slerp) de la de salida a una **llegada por el lado de día** (37° del Sol, algo por encima del plano) y a mitad de viaje la cámara **sube sobre el plano del sistema**, así se ven la salida y la llegada. La mirada pasa del cuerpo de origen al de destino en el primer 40 %. Al arrancar, la cámara también mira el lado de día.
-- **`FreeFlyMode`**: WASD + ratón (pointer lock) y Q/E para alabeo. Velocidad automática proporcional a la distancia al cuerpo más cercano (lento cerca, rapidísimo en el vacío), con Shift como multiplicador. Colisión suave con la superficie.
-- Selección ✅: clic (sin arrastre) con *ray picking* contra esferas analíticas (`navigation/picking.ts`, radio mínimo de 14 px para cuerpos diminutos), clic en una etiqueta, botones del HUD o teclas 0–9.
-- Fase 4: efecto *warp* en `postfx` según la velocidad del viaje.
+- **Aterrizar y despegar** ✅ (`OrbitMode.land` / `ascend`, botón del título, tecla `T`): bajada animada de 4,5 a 9 s, con la altitud en escala logarítmica, hasta 1,5·10⁻³ radios (5 km en Marte) y con la mirada inclinada hacia el horizonte. Si el cuerpo tiene un lugar destacado (`astro/facts.ts`: Valles Marineris, el cráter Tycho, el Himalaya…), la cámara pasa desde el principio al marco del cuerpo y se desplaza hasta encima de él en la primera mitad. Antes, el motor **adelanta el reloj hasta la media mañana del lugar** si allí es de noche (Newton sobre el ángulo horario con las posiciones y el giro reales de cada fecha de prueba) y pone el tiempo a 1 min/s; lo cuenta un aviso. Arrastrar o usar la rueda cancela la bajada.
+- **`FreeFlyMode`** ✅ (tecla `V` o botón): WASD para moverse, R/F para subir y bajar, Q/E para girar sobre el eje, flechas o arrastre para mirar, Mayús para el turbo (×5) y la rueda para la velocidad de crucero.
+  - La cámara va **anclada** al cuerpo más cercano: se guarda como (dirección, distancia en km) respecto a él. Así sigue al cuerpo aunque el reloj vaya a 1 año/s, y el cambio de escala la recoloca sola. Cada frame se mueve en escena (relativo al ancla) y vuelve a km con `ScaleSystem.inverseLocalDistance` (bisección en log-distancia: la función es monótona también durante la transición entre escalas).
+  - El ancla es el cuerpo con menor distancia en radios propios (lo que se ve), con histéresis (×0,7). Se calcula con la posición de este frame (durante el cambio de escala la Tierra se mueve miles de unidades por frame) y no cambia a mitad de ese cambio. El relevo parte de la posición de escena actual: no hay saltos. El ancla es el cuerpo «enfocado» para el resto del motor (detalle completo, superficie, cielo, nombres).
+  - Velocidad = 0,8 × altura sobre el suelo del ancla (en escena) por segundo: cruzar de h a h/e cuesta lo mismo a 10 m que a 1 UA. Colisión con el relieve a 8 m (en km, con `groundHeightKm`); por debajo de 0,1 radios, marco del cuerpo, y por debajo de 0,05, el horizonte se nivela solo.
+  - Al salir (`V`, `Esc` o elegir un cuerpo), `OrbitMode.adopt` toma la cámara donde esté (mismo cuerpo, dirección y altitud) y `CameraRig` funde la mirada anterior con la nueva en 0,9 s.
+- Selección ✅: clic (sin arrastre) con *ray picking* contra esferas analíticas (`navigation/picking.ts`, radio mínimo de 14 px para cuerpos diminutos), clic en una etiqueta, el navegador de cuerpos o teclas 0–9.
 
 ## 10. Post-procesado (`postfx/`)
 
 `RenderPipeline` con:
 
 - **Bloom** ✅ (`bloom()` de `three/addons/tsl/display/BloomNode.js`): el toque artístico principal. Umbral 1,05, por encima del albedo iluminado (≤ 1): solo hacen bloom el Sol (HDR) y las luces de ciudades. Pendiente: se ven anillos concéntricos en el halo del Sol (cadena de mips del bloom).
-- **Warp** (fase 4): estiramiento radial y aberración cromática proporcional a la velocidad de la cámara.
-- Tone mapping ACES ✅. Exposición automática suave (fase 4).
+- **Warp** ✅: estelas radiales hacia los bordes (máximo de 10 muestras hacia el centro: cada estrella deja una línea nítida), aberración cromática y una viñeta fría. Lo gobierna el **progreso del viaje**, no la velocidad de la cámara (en la escala comprimida esa velocidad no significa nada): sin² de la curva del viaje por una intensidad que crece con el cambio de escala (de la Tierra a la Luna apenas se nota; de Neptuno a Mercurio, mucho). En vuelo libre, el turbo hacia delante. El campo de visión se abre hasta 9° en el punto álgido. Va en una rama con un uniform: en reposo cuesta lo mismo que sin él. Con `prefers-reduced-motion`, al 30 %.
+- Tone mapping ACES ✅. Pendiente: exposición automática suave.
 
 ## 11. UI (`ui/`)
 
-- **HUD** ✅: Sol y planetas arriba (teclas 0–9) y, debajo, las lunas del sistema enfocado; cuerpo enfocado, altitud, fecha simulada (UTC), fps, backend y partículas dibujadas; tiempo («, pausa, », ahora y un campo de fecha; de tiempo real a 1 año/s; teclas `,` `.` espacio `N`); escala comprimida/real (`E`), órbitas (`O`) y nombres (`L`).
+Sin framework: cada componente es una clase con su `el` y un `update(estado)`; `Hud` los coloca y reparte el estado de cada frame. Las cifras se repintan a ~20 Hz y solo si cambian (`setText`). Estilo en `style.css`: cristal oscuro con borde fino y desenfoque (sin desenfoque en calidad baja), acento con el color del cuerpo de referencia (`--body`, realzado para que los oscuros se lean), nombres en Instrument Serif y cifras en Geist Mono tabular (`docs/ASSETS.md`).
+
+- **Título** ✅ (arriba a la izquierda, `FocusTitle`): tipo («Gigante de hielo · 7.º planeta», «Luna de Júpiter»), nombre con una entrada animada, altitud y distancia al Sol (en vuelo libre, velocidad) y las acciones principales: **Aterrizar** (o **Volver a la órbita** cerca del suelo) y **Ficha**.
+- **Rendimiento** ✅ (arriba a la derecha, `PerfMeter`): fps, gráfica de los últimos 120 frames con la referencia de 60 fps y el perfil de calidad. Abre los **ajustes** (`SettingsPanel`): calidad (Auto, Baja, Media, Alta, Ultra) con lo que cambia y lo recomendado para el equipo, datos en vivo (fps, partículas, densidad de píxeles, motor) y preferencias (medidor, perturbación del ratón, nombres, órbitas), guardadas en `localStorage`.
+- **Tiempo** ✅ (abajo a la izquierda, `TimeBar`): fecha y hora UTC, más lento / pausa / más rápido, nueve marcas para elegir la velocidad de un clic, volver a ahora y saltar a una fecha.
+- **Navegador de cuerpos** ✅ (abajo en el centro, `BodyDock`): el Sol y los planetas como esferas de su color (tamaño logarítmico con el radio, Saturno con anillo) y, encima, las lunas del sistema enfocado.
+- **Herramientas** ✅ (abajo a la derecha, `Toolbar`): escala comprimida/real, órbitas, nombres, vuelo libre, ajustes, ayuda, ocultar la interfaz (`U`) y pantalla completa.
+- **Ficha** ✅ (`InfoPanel`, tecla `I`): descripción, radio, masa, gravedad y velocidad de escape (calculadas con la masa y el radio), rotación, órbita (de los elementos orbitales), inclinación del eje, temperatura, presión y lunas conocidas, con fuentes (NASA NSSDCA y JPL SSD, en `astro/facts.ts`); en vivo, distancia al Sol, tiempo de luz, distancia a la Tierra y a la cámara; y el botón para aterrizar en su lugar destacado.
+- **Capas** ✅ (`Overlays`): «Rumbo a…» con el progreso del viaje, avisos breves (calidad ajustada, reloj adelantado al aterrizar), una pista de bienvenida que se va al usar los controles (y no vuelve) y la ayuda de controles (`?`). En vuelo libre, retícula y teclas.
 - **Etiquetas** ✅ (`ui/Labels.ts`): nombre de los cuerpos que miden menos de 30 px, clicables. Se ocultan si quedan detrás del disco de un cuerpo más cercano o encima de otra más importante (Sol, luego planetas, luego lunas). Imprescindibles en escala real.
-- **Panel de información** (fase 4): datos del cuerpo (radio, masa, día, año, temperatura).
+- **Pantalla de carga** ✅ (en `index.html`, para verse antes de que llegue el código): un disco de polvo en órbita kepleriana que se agrupa en anillos según avanza la carga real (motor, horneado de cada cuerpo, estrellas) y se condensa en el protosol al terminar. Mientras tanto `BaseBody.formationHeld` retiene la condensación de los cuerpos: al levantarse el telón todos se forman a la vez desde el polvo, a la vista, y después entra la interfaz.
+- **Teclado y foco**: tras un clic con el ratón el botón suelta el foco (así Espacio sigue pausando y no repite el clic); con Tab el foco se queda y se ve. Esc cierra lo último abierto y sale del vuelo libre. `prefers-reduced-motion` quita las animaciones de la interfaz y reduce el warp.
+- **Pantallas pequeñas**: por debajo de 1240 px el navegador pasa a su propia fila; por debajo de 760 px todo se apila abajo, el medidor se reduce a los fps y la ficha sale como hoja inferior.
 - **Debug** ✅ (lil-gui, solo con `?debug`): exposición, bloom, brillo del Sol y corona, luces nocturnas, reflejo, nubes, atmósfera, estrellas, aspecto de las partículas y del ratón, flujo y bola de los gigantes, brillo de anillos, asteroides y órbitas, relieve por cuerpo y parámetros de la escala comprimida. Con `?debug` también quedan `window.engine` y los *timestamps* de GPU (`engine.renderer.resolveTimestampsAsync('render')`).
 
 ## 12. Rendimiento
@@ -290,7 +306,18 @@ Todos implementan `CelestialBody` (`bodies/CelestialBody.ts`): `update(ctx)`, `s
 - Objetivo: **60 fps con unos 4M de partículas** en una GPU integrada moderna (Apple M1 o similar) con WebGPU. En WebGL2 el presupuesto se reduce automáticamente a la mitad.
 - Lo que se mueve se calcula en la GPU: en el vertex shader si es barato y depende solo del tiempo, y en *compute* (una vez por partícula) si es caro, como el ruido de Worley del Sol. Nunca ruido caro por vértice: cada sprite tiene 4 vértices y lo multiplicaría por 4. La CPU solo calcula unas decenas de posiciones de cuerpos por frame.
 - El LOD por densidad (§6.3) es lo que más pesa: el coste real está en el número de sprites diminutos que caen sobre los mismos píxeles, no en el total de partículas.
-- Densidad de píxeles hasta 2 (`config.maxPixelRatio`). Se probó 1,5 por rendimiento, pero en pantallas Retina la imagen se reescalaba y se veía borrosa.
+- **Perfiles de calidad** ✅ (`core/Quality.ts`):
+
+  | Perfil | Densidad de píxeles | Separación | Pool de superficie | Bloom | MSAA | Cristal |
+  |---|---|---|---|---|---|---|
+  | Baja | 1 | 3,4 px | 320 chunks | 1/4 | no | no |
+  | Media | 1,5 | 3,0 px | 448 | 0,35 | sí | sí |
+  | Alta | 2 | 2,6 px | 576 | 1/2 | sí | sí |
+  | Ultra | 3 | 2,2 px | 800 | 1/2 | sí | sí |
+
+  Lo que más pesa es el relleno de píxeles: la densidad de píxeles (×4 de 1 a 2) y la separación entre partículas (su número va con 1/separación²). La superficie deriva de la separación sus umbrales de división y fusión y la densidad del shader, así que el perfil también actúa a ras de suelo. En caliente cambian densidad, separación, bloom y cristal; el pool, en el siguiente descenso; el MSAA, al recargar (el pase de escena lo fija al compilarse; la UI lo avisa).
+- **Detección**: sin WebGPU o en un móvil, baja; NVIDIA o AMD, ultra; Intel o ≤ 4 núcleos, media; Qualcomm/ARM, baja; Apple y desconocidas, alta (el objetivo de este apartado). En **Auto** se parte de ahí y solo se baja (nunca se sube), si la mediana del tiempo de frame pasa de 1/42 s dos ventanas de 3 s seguidas, sin contar los 6 s tras arrancar o cambiar de perfil (shaders y horneados) ni los tirones de más de 250 ms, y solo con la página visible: con el panel oculto o con frames avanzados a mano el medidor no mide nada real. `?quality=alta` (o baja, media, ultra) fija el perfil y desactiva el ajuste: para medir de forma reproducible.
+- La densidad de píxeles por debajo de la nativa reescala la imagen y en Retina se ve borrosa: por eso alta usa 2.
 - La profundidad por píxel de las micro-esferas desactiva el *early-z*. Como `alphaTest` ya lo desactivaba, el coste extra es moderado, pero hay que tenerlo en cuenta al medir.
 - Medición de la fase 1: no hay una cifra fiable. Las pruebas se hicieron con la app sin ventana visible y macOS baja la frecuencia de la GPU; los *timestamps* variaron de 0,2 a 60 ms para la misma vista. Hay que medir con la ventana delante (fps del HUD).
 - Texturas grandes (heightmaps de 16k) se cargan bajo demanda y con un nivel de baja resolución primero.

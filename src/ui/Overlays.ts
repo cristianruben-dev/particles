@@ -104,7 +104,7 @@ const SHORTCUTS: [string, [string, string][]][] = [
     ['Arrastrar', 'Girar alrededor del cuerpo'],
     ['Botón derecho · Mayús + arrastrar', 'Mirar alrededor'],
     ['Rueda', 'Acercarse y alejarse, hasta el suelo'],
-    ['Clic en un cuerpo o su nombre', 'Viajar hasta él'],
+    ['Clic', 'Viajar al cuerpo o al nombre pulsado'],
   ]],
   ['Teclado', [
     ['0 – 9', 'Sol y planetas'],
