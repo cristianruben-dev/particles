@@ -8,10 +8,15 @@
  *   GM → masa con G = 6,6743·10⁻¹¹.
  * - Sol: NASA «Sun Fact Sheet» (masa) y temperatura efectiva nominal de la IAU (2015).
  * - Titán: temperatura y presión medidas por la Huygens (2005); Tritón: Voyager 2 (1989).
+ * - ISS: NASA «International Space Station Facts and Figures» (masa, tamaño, ocupación) y
+ *   el TLE de CelesTrak (altura, inclinación y periodo).
+ * - Cometas: órbitas de JPL Horizons (`astro/comets.ts`); núcleos medidos por las sondas
+ *   (Giotto, Rosetta, Deep Impact) o estimados, según la NASA y la ESA.
  * Radio, inclinación del eje y rotación salen de `bodies.ts`; la gravedad y la velocidad de
  * escape se calculan con la masa y ese radio, y el periodo orbital con los elementos orbitales.
  */
 import type { BodyId } from './bodies';
+import { COMET_ELEMENTS, cometPeriodDays, jdToMs, type CometId } from './comets';
 
 export const G = 6.6743e-11;
 
@@ -36,6 +41,13 @@ export interface BodyFacts {
   blurb: string;
   /** Un lugar reconocible donde aterrizar (los cuerpos con superficie). */
   site?: LandingSite;
+  /**
+   * Datos propios (la estación, los cometas): sustituyen a los calculados con la masa y el
+   * radio, que en ellos no dicen nada (la «gravedad en la superficie» de la ISS).
+   */
+  rows?: [label: string, value: string, note?: string][];
+  /** Fuentes, si no son las de los planetas. */
+  source?: string;
 }
 
 const fromGM = (gm: number) => (gm * 1e9) / G;
@@ -48,6 +60,27 @@ export function nameInText(id: BodyId, name: string): string {
 /** «de» + nombre, con la contracción: «del Sol», «de la Tierra», «de Júpiter». */
 export function ofName(id: BodyId, name: string): string {
   return id === 'sun' ? `del ${name}` : `de ${nameInText(id, name)}`;
+}
+
+const DATE = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+const n2 = (x: number, d = 2) => x.toLocaleString('es', { maximumFractionDigits: d });
+
+/** Ficha de un cometa: el núcleo y su órbita (de los elementos). */
+function cometFacts(id: CometId, type: string, nucleus: string | null, massKg: number, blurb: string): BodyFacts {
+  const el = COMET_ELEMENTS[id];
+  const period = cometPeriodDays(el);
+  const rows: [string, string, string?][] = [];
+  if (nucleus) rows.push(['Núcleo', nucleus]);
+  rows.push(['Periodo', period === null ? 'Órbita abierta' : `${n2(period / 365.25, period > 36_500 ? 0 : 1)} años`, period === null ? 'no volverá' : undefined]);
+  rows.push(['Perihelio', `${n2(el.q)} UA`, 'del Sol']);
+  if (period !== null) rows.push(['Afelio', `${n2(el.q * (1 + el.e) / (1 - el.e), 0)} UA`]);
+  rows.push(['Excentricidad', n2(el.e, 4)]);
+  rows.push(['Inclinación', `${n2(el.i, 1)}°`, el.i > 90 ? 'retrógrada' : undefined]);
+  rows.push(['Paso por el perihelio', DATE.format(new Date(jdToMs(el.tpJd))).replace('.', '')]);
+  return {
+    type, massKg, blurb, rows,
+    source: 'Órbita: JPL Horizons (elementos osculantes en el perihelio de esa aparición). Núcleo: NASA y ESA. La coma y las colas son un modelo: crecen con la cercanía al Sol según el brillo medido del cometa.',
+  };
 }
 
 export const FACTS: Record<BodyId, BodyFacts> = {
@@ -133,4 +166,35 @@ export const FACTS: Record<BodyId, BodyFacts> = {
     type: 'Luna', massKg: fromGM(106.1),
     blurb: 'Tan grande respecto a Plutón que los dos giran alrededor de un punto que queda fuera de Plutón.',
   },
+  iss: {
+    type: 'Estación espacial en órbita', massKg: 450_000,
+    blurb: 'La Estación Espacial Internacional: un laboratorio del tamaño de un campo de fútbol, habitado sin interrupción desde noviembre de 2000. Da 16 vueltas a la Tierra al día y en cada una pasa unos 35 minutos en su sombra.',
+    rows: [
+      ['Tamaño', '109 × 73 m', 'armadura × alas'],
+      ['Masa', '≈ 450 t'],
+      ['Altura de la órbita', '≈ 420 km'],
+      ['Velocidad', '7,66 km/s', '27.600 km/h'],
+      ['Una vuelta', '92,9 min'],
+      ['Inclinación de la órbita', '51,6°'],
+      ['En órbita desde', '20 nov 1998', 'primer módulo, Zariá'],
+      ['Tripulación', '7 personas', 'lo habitual'],
+    ],
+    source: 'Datos: NASA (International Space Station Facts and Figures). Posición: SGP4 con el último TLE de CelesTrak; lejos de su fecha la estación sigue su órbita, pero no en su punto exacto.',
+  },
+  halley: cometFacts('halley', 'Cometa periódico', '15 × 8 km', 2.2e14,
+    'El cometa periódico más famoso: vuelve cada 76 años. En 1986 lo visitaron cinco sondas; la Giotto fotografió su núcleo, negro como el carbón. Volverá a pasar por el perihelio en 2061.'),
+  encke: cometFacts('encke', 'Cometa de la familia de Júpiter', '4,8 km', 1e14,
+    'El cometa de periodo más corto que se conoce: da la vuelta al Sol en 3,3 años. Sus restos forman la lluvia de estrellas de las Táuridas.'),
+  churyumov: cometFacts('churyumov', 'Cometa de la familia de Júpiter', '4,1 × 3,3 km', 1e13,
+    '67P/Churiumov-Guerasimenko, el cometa de la sonda Rosetta: lo acompañó de 2014 a 2016 y le dejó el módulo Philae, el primero que se posó en un núcleo cometario.'),
+  halebopp: cometFacts('halebopp', 'Cometa de largo periodo', '≈ 60 km', 1e16,
+    'El gran cometa de 1997: se vio a simple vista durante 18 meses, un récord. Su núcleo es de los mayores conocidos. Volverá dentro de unos 2.500 años.'),
+  neowise: cometFacts('neowise', 'Cometa de largo periodo', '≈ 5 km', 1e13,
+    'El gran cometa del verano de 2020, visible a simple vista desde el hemisferio norte con sus dos colas. Pasó a 0,29 UA del Sol y no volverá en casi 7.000 años.'),
+  tsuchinshan: cometFacts('tsuchinshan', 'Cometa de la nube de Oort', null, 0,
+    'Llegó de la nube de Oort y brilló en octubre de 2024 con una cola de más de 30° y una anticola. Su órbita es casi parabólica: puede que no vuelva nunca.'),
+  atlas3i: cometFacts('atlas3i', 'Objeto interestelar', '< 5,6 km', 0,
+    'El tercer objeto interestelar descubierto (2025), tras ʻOumuamua y Borisov: viene de otra estrella a 58 km/s y cruza el sistema solar una sola vez, en una hipérbola muy abierta.'),
+  bok: cometFacts('bok', 'Cometa de largo periodo', null, 0,
+    'C/2026 A2 (Bok), descubierto en enero de 2026. Pasa por el perihelio el 22 de diciembre de 2026, a 1,9 UA del Sol: lejos para un gran espectáculo, pero activo estos meses.'),
 };

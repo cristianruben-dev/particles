@@ -2,8 +2,12 @@
  * Bucle principal y orquestación de módulos. Ver docs/ARQUITECTURA.md §3.
  */
 import * as THREE from 'three/webgpu';
-import { BODIES, type BodyId } from '../astro/bodies';
+import { BODIES, COMET_IDS, type BodyId } from '../astro/bodies';
+import { cometElementsAt, cometPosition, cometVelocity, perihelionNear, type CometId } from '../astro/comets';
+import type { ShadowEvent } from '../astro/eclipses';
+import { findShadowEvents } from '../astro/eclipses';
 import { FACTS, type LandingSite } from '../astro/facts';
+import { refreshIssTle } from '../astro/iss';
 import { eclToScene } from '../astro/frames';
 import { AsteroidBelt } from '../bodies/AsteroidBelt';
 import type { CelestialBody, FrameContext } from '../bodies/CelestialBody';
@@ -23,6 +27,7 @@ import { createPipeline, warpLook, type BloomControls } from '../postfx/Pipeline
 import { ScaleSystem } from '../scale/ScaleSystem';
 import { surfaceBudget } from '../surface/Surface';
 import { createDebugGui } from '../ui/DebugGui';
+import type { PerihelionEvent } from '../ui/EventsPanel';
 import { Hud } from '../ui/Hud';
 import { Labels } from '../ui/Labels';
 import { FloatingOrigin } from './FloatingOrigin';
@@ -65,8 +70,9 @@ export class Engine {
   private orbit!: OrbitMode;
   private fly!: FreeFlyMode;
   private flying = false;
-  /** «Aterrizar» pulsado durante el viaje: se ejecuta al llegar. */
+  /** «Aterrizar» pulsado durante el viaje: se ejecuta al llegar (en `pendingSite`, si lo hay). */
   private pendingLand = false;
+  private pendingSite: LandingSite | null = null;
   private hud!: Hud;
   private labels!: Labels;
   private orbits!: OrbitLines;
@@ -96,6 +102,8 @@ export class Engine {
 
     this.scene.backgroundNode = horizonBackground();
     this.createBodies();
+    // TLE de la ISS del día, si hay red (sin bloquear: mientras, el incluido).
+    void refreshIssTle();
     const earth = this.byId('earth') ?? this.bodies[0];
     // Primer frame: posiciones calculadas antes de colocar la cámara.
     layoutSystem(this.bodies, this.clock.timeMs, this.scale);
@@ -123,6 +131,7 @@ export class Engine {
           color: b.data.color,
           radiusKm: b.data.radiusKm,
           rings: b.data.id === 'saturn',
+          comet: b.data.kind === 'comet',
         };
       }),
       quality: this.quality,
@@ -133,6 +142,12 @@ export class Engine {
         { id: 'orbits', label: 'Órbitas', key: 'O', get: () => this.orbits.visible, set: (on) => (this.orbits.visible = on) },
       ],
       onSelectBody: (id) => this.focus(this.byId(id)!),
+      events: {
+        shadows: (group, from, direction) => findShadowEvents(group, from, direction, group === 'jupiter' ? 6 : 4),
+        perihelia: (from, direction) => this.perihelia(from, direction),
+        onGo: (e, ground) => this.goToEvent(e, ground),
+        onGoComet: (e) => this.goToPerihelion(e),
+      },
       onSlower: () => this.clock.slower(),
       onFaster: () => this.clock.faster(),
       onSetRate: (i) => {
@@ -183,12 +198,48 @@ export class Engine {
     this.renderer.setAnimationLoop(this.frame);
   }
 
-  focus(body: CelestialBody): void {
+  focus(body: CelestialBody, arrival?: { x: number; y: number; z: number }): void {
     if (this.flying) this.exitFly();
     this.pendingLand = false;
+    this.pendingSite = null;
     this.setReference(body);
-    this.orbit.focusOn(body, this.rig);
+    this.orbit.focusOn(body, this.rig, arrival);
     this.hud.coach.dismiss();
+  }
+
+  /**
+   * Lleva el reloj y la cámara a un eclipse o tránsito: un poco antes del máximo (o de que
+   * empiece, en los de Júpiter), con el tiempo a 1 min/s (10 min/s en Júpiter) y mirando
+   * hacia la sombra. `fromGround`: aterriza en el lugar del máximo para verlo desde el suelo.
+   */
+  goToEvent(e: ShadowEvent, fromGround: boolean): void {
+    const receiver = this.byId(e.receiver);
+    if (!receiver) return;
+    const MIN = 60_000;
+    const jupiter = e.kind === 'transit' || e.kind === 'moonEclipse';
+    const t = jupiter ? e.startMs - 10 * MIN : e.maxMs - (e.kind === 'lunar' ? 50 : fromGround ? 12 : 40) * MIN;
+    this.clock.timeMs = t;
+    this.clock.paused = false;
+    this.clock.rateIndex = jupiter ? 2 : 1;
+    // Posiciones de la nueva fecha antes de elegir desde dónde se mira.
+    layoutSystem(this.bodies, t, this.scale);
+    for (const b of this.bodies) b.orient(t);
+    // La sombra cae en la cara que mira al ocultador (eclipses de Sol, tránsitos).
+    let arrival: { x: number; y: number; z: number } | undefined;
+    const occluder = this.byId(e.occluder);
+    if (occluder && (e.kind === 'solar' || e.kind === 'transit')) {
+      const a = occluder.sceneD, b = receiver.sceneD;
+      const d = Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+      arrival = { x: (a.x - b.x) / d, y: (a.y - b.y) / d, z: (a.z - b.z) / d };
+    }
+    this.focus(receiver, arrival);
+    if (fromGround && e.site) {
+      this.pendingLand = true;
+      this.pendingSite = { name: 'el lugar del máximo', ...e.site };
+    }
+    const when = new Date(jupiter ? e.startMs : e.maxMs).toISOString().slice(11, 16);
+    const rate = jupiter ? '10 min/s' : '1 min/s';
+    this.hud.toasts.show(`${jupiter ? 'Empieza' : 'Máximo'} a las ${when} UTC · tiempo a ${rate}`, 'eclipse', 5);
   }
 
   /** La pantalla de carga se ha ido: entra la interfaz. */
@@ -209,8 +260,48 @@ export class Engine {
     this.hud.setActiveBody(body.data.id, body.landable);
   }
 
-  /** Aterriza en el lugar destacado del cuerpo enfocado (o bajo la cámara). */
-  land(): void {
+  /** Próximos (o anteriores) pasos de los cometas por el perihelio, en un plazo de 150 años. */
+  private perihelia(fromMs: number, direction: 1 | -1): PerihelionEvent[] {
+    const span = 150 * 365.25 * 86_400_000;
+    const out: PerihelionEvent[] = [];
+    for (const id of COMET_IDS) {
+      const t = perihelionNear(id, fromMs, direction);
+      if (t !== null && Math.abs(t - fromMs) < span) out.push({ id, name: BODIES[id].name, timeMs: t, qAU: cometElementsAt(id, t).q });
+    }
+    return out.sort((a, b) => (a.timeMs - b.timeMs) * direction);
+  }
+
+  /**
+   * Lleva el reloj unos días después del perihelio (la cola es más larga) a 6 h/s y mira el
+   * cometa desde encima del plano de su órbita, donde se ve la cola de polvo curvarse.
+   */
+  goToPerihelion(e: PerihelionEvent): void {
+    const comet = this.byId(e.id);
+    if (!comet) return;
+    const t = e.timeMs + 4 * 86_400_000;
+    this.clock.timeMs = t;
+    this.clock.paused = false;
+    this.clock.rateIndex = 4;
+    layoutSystem(this.bodies, t, this.scale);
+    const el = cometElementsAt(e.id as CometId, t);
+    const p = eclToScene(cometPosition(el, t)), v = eclToScene(cometVelocity(el, t));
+    const normal = new THREE.Vector3(p.x, p.y, p.z).cross(new THREE.Vector3(v.x, v.y, v.z)).normalize();
+    const sunward = new THREE.Vector3(-p.x, -p.y, -p.z).normalize();
+    const arrival = normal.multiplyScalar(0.85).addScaledVector(sunward, 0.4).normalize();
+    if (this.flying) this.exitFly();
+    this.pendingLand = false;
+    this.pendingSite = null;
+    this.setReference(comet);
+    this.orbit.focusOn(comet, this.rig, arrival, 1500);
+    this.hud.coach.dismiss();
+    this.hud.toasts.show(`${e.name} · perihelio el ${new Date(e.timeMs).toISOString().slice(0, 10)} · tiempo a 6 h/s`, 'sparkle', 5);
+  }
+
+  /**
+   * Aterriza en el lugar destacado del cuerpo enfocado (o bajo la cámara). Con `custom`
+   * (el lugar de un eclipse), allí y sin tocar el reloj.
+   */
+  land(custom?: LandingSite): void {
     const body = this.orbit.focus;
     if (!body.landable || this.flying) {
       this.pendingLand = false;
@@ -222,8 +313,10 @@ export class Engine {
       return;
     }
     this.pendingLand = false;
-    const site = FACTS[body.data.id].site;
-    if (site) {
+    this.pendingSite = null;
+    const site = custom ?? FACTS[body.data.id].site;
+    if (custom) this.hud.toasts.show(`Aterrizando en ${custom.name}`, 'land', 4);
+    else if (site) {
       // En la superficie el tiempo va despacio: si no, el Sol cruza el cielo en segundos.
       const slowed = this.clock.rateIndex > 1;
       if (slowed) this.clock.rateIndex = 1;
@@ -333,8 +426,10 @@ export class Engine {
     this.scale.setMode(this.scale.mode === 'real' ? 'compressed' : 'real');
   }
 
+  private readonly bodyMap = new Map<string, CelestialBody>();
+
   private byId(id: string): CelestialBody | undefined {
-    return this.bodies.find((b) => b.data.id === id);
+    return this.bodyMap.get(id);
   }
 
   private createBodies(): void {
@@ -344,6 +439,7 @@ export class Engine {
       const body = createBody(data, data.parent ? byId.get(data.parent) ?? null : null, this.scale);
       if (!body) continue;
       byId.set(id, body);
+      this.bodyMap.set(id, body);
       this.bodies.push(body);
       this.scene.add(body.object3d);
     }
@@ -414,7 +510,7 @@ export class Engine {
     this.scale.update(dt);
     layoutSystem(this.bodies, this.clock.timeMs, this.scale);
     for (const body of this.bodies) body.orient(this.clock.timeMs);
-    if (this.pendingLand && !this.flying && !this.orbit.inTransition) this.land();
+    if (this.pendingLand && !this.flying && !this.orbit.inTransition) this.land(this.pendingSite ?? undefined);
     this.rig.update(dt);
     this.updateWarp();
 
@@ -435,6 +531,7 @@ export class Engine {
       pointer,
       nowSeconds: now / 1000,
       camera: this.rig.camera,
+      body: (id) => this.bodyMap.get(id),
     };
     for (const body of this.bodies) body.update(ctx);
     this.orbits.update(ctx);

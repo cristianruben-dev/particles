@@ -2,7 +2,7 @@
 
 Cuatro fases. Cada una termina en algo que se puede abrir en el navegador y disfrutar. Cada fase tiene un **criterio de "hecho"** comprobable: no se pasa a la siguiente hasta cumplirlo.
 
-Estado: **Fase 4 en curso**: perfiles de calidad, medidor de fps, interfaz nueva, ficha, aterrizaje, vuelo libre, warp y pantalla de carga hechos. Publicado en GitHub Pages. Quedan el descenso entre nubes de los gigantes y el sonido (opcional), y comprobar con la ventana delante los 60 fps (el medidor del HUD ya lo permite) y que nada tiemble en escala real.
+Estado: **Fase 4 en curso**: perfiles de calidad, medidor de fps, interfaz nueva, ficha, aterrizaje, vuelo libre, warp, pantalla de carga, eclipses y tránsitos con su calendario, cometas y la ISS hechos. Publicado en GitHub Pages. Quedan el descenso entre nubes de los gigantes y el sonido (opcional), y comprobar con la ventana delante los 60 fps (el medidor del HUD ya lo permite) y que nada tiemble en escala real.
 
 ---
 
@@ -116,6 +116,11 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 6. [x] Pantalla de carga con el sistema "formándose" desde el polvo (§11).
 7. [x] Despliegue estático en GitHub Pages (`.github/workflows/pages.yml`): build con la subruta del repo en cada push a `master`; las rutas de `public/` llevan `import.meta.env.BASE_URL`.
 8. [x] Extra: interfaz rediseñada entera (título, tiempo, navegador de cuerpos, herramientas, ajustes, ayuda, avisos y pista de bienvenida), con atajos nuevos (`T` aterrizar, `V` vuelo, `I` ficha, `U` ocultar, `?` ayuda).
+9. [x] **Eclipses y tránsitos** (§5.3): sombras con la geometría real en km sobre globos, nubes, atmósferas, gigantes y superficie (la Luna sobre la Tierra, la Tierra sobre la Luna con su luz cobriza, las galileanas sobre Júpiter y Júpiter sobre ellas, Titán, Caronte, Tritón); en la totalidad, desde el suelo, se oscurece el cielo y salen las estrellas. Para que cuadren: la Luna pasa a ELP-2000/82 (Meeus 47), ΔT, el polo y el giro de la Tierra con la precesión, el baricentro Tierra-Luna y el tiempo de luz.
+10. [x] **Calendario de eventos** (`C`): próximos o anteriores eclipses de Sol y de Luna, sombras en Júpiter y perihelios de los cometas, con «Ir» y, en los eclipses centrales, «Desde el suelo».
+11. [x] **Cometas** (§5.2, §8): ocho (Halley, Encke, 67P, Hale-Bopp, NEOWISE, Tsuchinshan-ATLAS, 3I/ATLAS y Bok) con coma, cola de polvo curvada (síndinas) y cola de iones, que crecen al acercarse al Sol; sus órbitas y su grupo en el navegador.
+12. [x] **ISS** (§5.1, §8): SGP4 con el TLE del día, modelo de partículas a escala con las alas siguiendo al Sol, actitud de vuelo y la sombra de la Tierra.
+13. [x] La perturbación del ratón ya no infla los cuerpos lejanos (§6.4).
 
 **Hecho cuando:** una persona que no conoce el proyecto lo abre, explora sin instrucciones y aterriza en Marte.
 - [~] El camino existe sin instrucciones: la pista de bienvenida explica arrastrar, rueda y clic; Marte está en el navegador de abajo; el botón **Aterrizar** del título baja a Valles Marineris, de día (verificado: 5 km sobre el suelo, superficie completa, 0 huecos, cañón y cielo de polvo a la vista). Falta probarlo con alguien de verdad.
@@ -127,10 +132,16 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 - Superficie a 10 m tras el arreglo del horizonte (1024×768, calidad alta, panel del navegador visible): 0 huecos en reposo en la Tierra (367 chunks), la Luna (321) y Marte (415). Con un giro de 180° suavizado, hasta 100–136 huecos durante 3–5 frames; con el cálculo del horizonte de la fase 3 sale lo mismo en la Tierra (105 durante 4), así que la diferencia con las cifras de la fase 3 es del método (giro y ventana distintos), no una regresión.
 - La interfaz no cuesta fps: 22,7 con paneles de cristal, 22,0 sin desenfoque y 22,0 sin interfaz (a 10 m, 2,8M partículas, en el panel emulado); el bucle de la CPU tarda 0,7 ms por frame.
 
+- Eclipses de Sol de 2026–2028 contra el catálogo de la NASA: lugar del máximo a 3–23 km (57 km en el rasante de la Antártida del 17/02/2026) y hora a menos de un minuto. Luna frente a JPL Horizons: 1–5″. ISS frente a wheretheiss.at: misma longitud y latitud dentro de la diferencia geodésica (0,18°). Cometas en su perihelio frente a Horizons: < 2.000 km.
+- Visto en el navegador: la sombra de la Luna sobre Egipto el 02/08/2027 (también tras añadir el tiempo de luz), la sombra de Ío sobre Júpiter el 28/10/2026 a las 16:00 justo donde la da la CPU, la Luna cobriza el 03/03/2026, la totalidad desde el suelo (cielo negro y estrellas), la ISS con la Tierra detrás y su órbita, NEOWISE con sus dos colas en julio de 2020, las órbitas de los cometas desde el sistema entero, su grupo en el navegador y el calendario. El ratón ya no deforma Júpiter a 28 px y sigue apartando partículas a 335 px. Las últimas comprobaciones se hicieron con el panel del navegador oculto, avanzando frames a mano: el tiempo de carga sin la ventana delante no se ha medido.
+
 **Pendientes detectados en la fase 4:**
 - **Rendimiento a ras de suelo, sin medir de verdad:** en el panel del navegador (emulando 1024×768 a 2×) salieron 22 fps a 10 m del suelo, y con calidad media o baja apenas sube (28–30, ¿tope del panel?). Hay que leerlo en el medidor con la ventana delante; si se confirma, el cuello está en los vértices (2,5M sprites × 4) y no en el relleno: el perfil bajo debería recortar partículas de la superficie, no solo resolución.
 - El warp se ha visto solo en capturas pequeñas: falta mirarlo a pantalla completa (intensidad de las estelas).
 - La interfaz en móvil está maquetada pero sin probar en un teléfono (táctil; el vuelo libre necesita teclado).
+- Desde el suelo, en la escala comprimida, la Luna no tapa exactamente al Sol (paralaje deformada): la sombra es la real, el disco solo cuadra en escala real.
+- Junto a la ISS los puntos de la Tierra se ven gruesos (es el globo, unos 20 km entre partículas): no hay superficie si el foco no es la Tierra.
+- Cometas: la coma y las colas son un modelo artístico con la actividad de JPL; los cometas débiles (Encke) apenas tienen cola. Sin perturbaciones de los planetas, lejos de las apariciones con elementos propios (Halley 1986 y 2061, 67P 2021 y 2028) el perihelio se desvía días.
 
 ---
 

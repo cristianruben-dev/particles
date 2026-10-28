@@ -43,6 +43,7 @@ export class InfoPanel {
   private readonly live: Record<keyof InfoLive | 'light', HTMLElement>;
   private readonly liveRows: Record<keyof InfoLive | 'light', HTMLElement>;
   private readonly land: HTMLButtonElement;
+  private readonly source: HTMLElement;
   private id: BodyId | null = null;
   private lastLive = 0;
 
@@ -82,9 +83,9 @@ export class InfoPanel {
     this.land.type = 'button';
     this.land.addEventListener('click', actions.onLand);
 
-    const source = el('p', 'ui-info-source', 'Datos: NASA NSSDCA (Planetary Fact Sheet) y JPL SSD. Posiciones calculadas para la fecha simulada.');
+    this.source = el('p', 'ui-info-source');
     const body = el('div', 'ui-info-body');
-    body.append(this.blurb, this.grid, liveSection, this.land, source);
+    body.append(this.blurb, this.grid, liveSection, this.land, this.source);
     this.el.append(head, body);
   }
 
@@ -126,7 +127,7 @@ export class InfoPanel {
     if (facts.pressureBar !== undefined) rows.push(['Presión en superficie', formatPressure(facts.pressureBar)]);
     if (facts.moons !== undefined) rows.push(['Lunas conocidas', num(facts.moons, 0)]);
 
-    this.grid.replaceChildren(...rows.map(([label, value, note]) => {
+    this.grid.replaceChildren(...(facts.rows ?? rows).map(([label, value, note]) => {
       const wrap = el('div');
       const dd = el('dd', '', value);
       if (note) dd.append(el('small', '', note));
@@ -138,6 +139,7 @@ export class InfoPanel {
     this.liveRows.light.hidden = id === 'sun';
     this.liveRows.earthDistanceKm.hidden = id === 'earth';
     this.land.hidden = !landable;
+    setText(this.source, facts.source ?? 'Datos: NASA NSSDCA (Planetary Fact Sheet) y JPL SSD. Posiciones calculadas para la fecha simulada.');
     this.land.innerHTML = `${icons.land}<span>${facts.site ? `Aterrizar en ${facts.site.name}` : 'Aterrizar'}</span>`;
     this.lastLive = 0;
   }

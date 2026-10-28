@@ -6,9 +6,10 @@ import type { BodyId } from './astro/bodies';
 export const config = {
   /** Cuerpos activos, cada padre antes que sus hijos. */
   bodies: [
-    'sun', 'mercury', 'venus', 'earth', 'moon', 'mars',
+    'sun', 'mercury', 'venus', 'earth', 'moon', 'iss', 'mars',
     'jupiter', 'io', 'europa', 'ganymede', 'callisto',
     'saturn', 'titan', 'uranus', 'neptune', 'triton', 'pluto', 'charon',
+    'halley', 'encke', 'churyumov', 'halebopp', 'neowise', 'tsuchinshan', 'atlas3i', 'bok',
   ] as BodyId[],
 
   /** Partículas máximas en escena con backend WebGPU. */

@@ -212,14 +212,20 @@ export class OrbitMode implements NavigationMode {
     this.elevation = this.targetElevation = ARRIVAL_ELEVATION;
   }
 
-  focusOn(body: CelestialBody, rig: CameraRig): void {
-    if (body === this.focus && !this.transition) return;
+  /**
+   * Viaja a un cuerpo. `arrival` (unitaria, ejes de escena) fija desde dónde se le mira al
+   * llegar, en vez del lado de día (los eclipses: hacia la sombra). Con el mismo cuerpo y una
+   * llegada, solo gira la cámara hasta allí.
+   */
+  focusOn(body: CelestialBody, rig: CameraRig, arrival?: Dir, distanceRadii?: number): void {
+    if (body === this.focus && !this.transition && !arrival) return;
     this.descent = null;
     this.setFrame('scene');
     const p = rig.position;
     const dx = p.x - body.sceneD.x, dy = p.y - body.sceneD.y, dz = p.z - body.sceneD.z;
     const d = Math.hypot(dx, dy, dz);
-    this.altitude = this.targetAltitude = body.data.radiusKm * (DEFAULT_DISTANCE_RADII - 1);
+    const viewRadii = distanceRadii ?? body.data.viewRadii ?? DEFAULT_DISTANCE_RADII;
+    this.altitude = this.targetAltitude = body.data.radiusKm * (viewRadii - 1);
     this.heading = this.targetHeading = this.pitch = this.targetPitch = 0;
     // Cámara aún sin colocar (o justo en el centro): sin dirección de partida, no hay viaje.
     if (d > 1e-6) {
@@ -227,11 +233,12 @@ export class OrbitMode implements NavigationMode {
       // Llegada por el lado de día: girada respecto al Sol (en el origen de la escena).
       let endAz = Math.atan2(dz, dx), endEl = Math.asin(startDir.y);
       const s = body.sceneD, sl = Math.hypot(s.x, s.y, s.z);
-      if (sl > 0) {
+      if (arrival) [endAz, endEl] = toAngles(arrival);
+      else if (sl > 0) {
         endAz = Math.atan2(-s.z, -s.x) + ARRIVAL_SUN_ANGLE;
         endEl = ARRIVAL_ELEVATION;
       }
-      const ratio = d / rig.scale.localDistance(body.data, body.data.radiusKm * DEFAULT_DISTANCE_RADII);
+      const ratio = d / rig.scale.localDistance(body.data, body.data.radiusKm * viewRadii);
       this.transition = {
         from: this.focus,
         t: 0,

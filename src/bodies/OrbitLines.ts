@@ -7,11 +7,13 @@
  * shader con `ScaleSystem.distanceNode`: siguen la transición entre escalas sin recalcular.
  */
 import * as THREE from 'three/webgpu';
-import { float, fract, instanceIndex, length, modelWorldMatrix, smoothstep, uniform, vec3, vec4 } from 'three/tsl';
+import { float, fract, instanceIndex, length, modelWorldMatrix, smoothstep, step, uniform, vec3, vec4 } from 'three/tsl';
 import { horizonMask } from '../core/Horizon';
+import { COMET_ELEMENTS, anomalyAtDistance, cometElementsAt, cometOrbitPoint, cometPeriodDays, jdToMs } from '../astro/comets';
 import { positionRelativeToParent } from '../astro/ephemeris';
 import { eclToScene, length3d } from '../astro/frames';
 import { projectedRadiusPx } from '../particles/LodManager';
+import { AU_KM } from '../astro/units';
 import { pixelAngle, softDisc } from '../particles/nodes';
 import { ParticleField, vec4Buffer, type ParticleBuffer } from '../particles/ParticleField';
 import type { ScaleSystem } from '../scale/ScaleSystem';
@@ -28,6 +30,7 @@ function semiMajorKm(body: CelestialBody): number {
   const d = body.data;
   if (d.orbit) return d.orbit.a.value * 149_597_870.7;
   if (d.satellite) return d.satellite.a;
+  if (d.kind === 'station') return 6_790;
   return 384_400; // la Luna
 }
 
@@ -36,6 +39,7 @@ function periodDays(body: CelestialBody): number {
   const d = body.data;
   if (d.orbit) return 365.25 * Math.pow(d.orbit.a.value, 1.5);
   if (d.satellite) return 360 / d.satellite.meanMotion;
+  if (d.kind === 'station') return d.rotationPeriodH / 24;
   return 27.32; // la Luna
 }
 
@@ -95,7 +99,8 @@ class Orbit {
     this.bodyRadius.value = this.body.sceneRadius;
     const orbitPx = projectedRadiusPx(ctx.scale.localDistance(parent.data, this.semiMajorKm), this.field.object.position.length());
     this.fade.value = THREE.MathUtils.smoothstep(orbitPx, 25, 70);
-    this.field.object.visible = this.fade.value > 0;
+    // Sin el cuerpo (la ISS antes de 1998 o con el reloj muy rápido), sin su órbita.
+    this.field.object.visible = this.fade.value > 0 && this.body.object3d.visible;
   }
 
   private sample(timeMs: number): void {
@@ -112,15 +117,86 @@ class Orbit {
   }
 }
 
+/** Hasta dónde se dibuja la órbita de un cometa (UA): la del Hale-Bopp llega a 370. */
+const COMET_ORBIT_MAX_AU = 50;
+const COMET_ORBIT_POINTS = 900;
+/** Días de estela brillante detrás de un cometa. */
+const COMET_TRAIL_DAYS = 240;
+
+/**
+ * Órbita de un cometa: fija (dos cuerpos), con los puntos repartidos por la anomalía y no
+ * por el tiempo (cerca del Sol pasa en pocos días: por tiempo quedarían cinco puntos en el
+ * perihelio). Cada punto guarda sus días respecto al perihelio para la estela.
+ */
+class CometOrbit {
+  readonly field: ParticleField;
+  /** Días desde el perihelio, reducidos en la CPU (en las cerradas, a ±medio periodo). */
+  private readonly nowDays = uniform(0);
+  private readonly bodyLocal = uniform(new THREE.Vector3());
+  private readonly bodyRadius = uniform(1);
+  private readonly fade = uniform(1);
+  private readonly periodDays: number | null;
+
+  constructor(readonly body: CelestialBody, scale: ScaleSystem) {
+    const el = COMET_ELEMENTS[body.data.comet!];
+    this.periodDays = cometPeriodDays(el);
+    const count = COMET_ORBIT_POINTS;
+    const span = anomalyAtDistance(el, COMET_ORBIT_MAX_AU);
+    const points = new Float32Array(count * 4), days = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) {
+      const { position, days: d } = cometOrbitPoint(el, -span + (2 * span * i) / (count - 1));
+      const r = length3d(position);
+      const dir = eclToScene(position);
+      points.set([dir.x / r, dir.y / r, dir.z / r, r], i * 4);
+      days[i * 4] = d;
+    }
+    const attr = vec4Buffer(points).toAttribute();
+    const local = attr.xyz.mul(scale.distanceNode(body.parent!.data, attr.w));
+    this.field = new ParticleField(count, 'additive');
+    const material = this.field.material;
+    material.sizeAttenuation = false;
+    material.positionNode = local;
+    material.scaleNode = pixelAngle.mul(1.5);
+
+    // Estela: los puntos por los que pasó hace poco, más brillantes.
+    let age = this.nowDays.sub(vec4Buffer(days).toAttribute().x);
+    if (this.periodDays) age = age.add(this.periodDays * 1.5).mod(this.periodDays).sub(this.periodDays * 0.5);
+    const trail = float(1).sub(smoothstep(0, COMET_TRAIL_DAYS, age)).mul(step(0, age)).mul(0.8).add(0.18);
+    const near = smoothstep(this.bodyRadius.mul(1.3), this.bodyRadius.mul(3), length(local.sub(this.bodyLocal)));
+    const c = new THREE.Color(body.data.color).lerp(new THREE.Color(0xffffff), 0.3);
+    const world = modelWorldMatrix.mul(vec4(local, 1)).xyz;
+    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(trail).mul(near).mul(this.fade).mul(orbitLook.brightness).mul(horizonMask(world)).mul(0.42), 1);
+    material.opacityNode = softDisc();
+    this.qKm = el.q * AU_KM;
+  }
+
+  private readonly qKm: number;
+
+  update(ctx: FrameContext): void {
+    const parent = this.body.parent!;
+    ctx.origin.place(this.field.object, parent.sceneD);
+    // Días desde el perihelio de la aparición más cercana (los puntos, desde el suyo).
+    let d = (ctx.timeMs - jdToMs(cometElementsAt(this.body.data.comet!, ctx.timeMs).tpJd)) / MS_PER_DAY;
+    if (this.periodDays) d = ((d % this.periodDays) + this.periodDays * 1.5) % this.periodDays - this.periodDays * 0.5;
+    this.nowDays.value = d;
+    const b = this.body.sceneD, p = parent.sceneD;
+    this.bodyLocal.value.set(b.x - p.x, b.y - p.y, b.z - p.z);
+    this.bodyRadius.value = this.body.sceneRadius;
+    const orbitPx = projectedRadiusPx(ctx.scale.localDistance(parent.data, this.qKm * 3), this.field.object.position.length());
+    this.fade.value = THREE.MathUtils.smoothstep(orbitPx, 25, 70);
+    this.field.object.visible = this.fade.value > 0 && this.body.object3d.visible;
+  }
+}
+
 export class OrbitLines {
   readonly group = new THREE.Group();
-  private readonly orbits: Orbit[];
+  private readonly orbits: (Orbit | CometOrbit)[];
   visible = true;
 
   constructor(bodies: readonly CelestialBody[], scale: ScaleSystem) {
     this.orbits = bodies
       .filter((b) => b.parent)
-      .map((b) => new Orbit(b, scale, b.parent!.parent ? 360 : 1500));
+      .map((b) => (b.data.comet ? new CometOrbit(b, scale) : new Orbit(b, scale, b.parent!.parent ? 360 : 1500)));
     for (const o of this.orbits) this.group.add(o.field.object);
   }
 

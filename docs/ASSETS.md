@@ -51,6 +51,26 @@ Se instalan con npm (Fontsource) y Vite las empaqueta: no van en `public/`.
 | Verificación | JPL Horizons (efemérides de referencia) | Dominio público |
 | Anillos de Saturno | Perfil radial de opacidad (Cassini) | Dominio público |
 
+## Datos incluidos en el código (fase 4)
+
+No van en `public/`: son tablas en `src/astro/`.
+
+| Dato | Fuente | Licencia |
+|---|---|---|
+| Luna (60 + 60 términos de ELP-2000/82) | Meeus, *Astronomical Algorithms*, cap. 47, en la transcripción de la biblioteca `astronomia` (commenthol, Sonia Keys) | MIT (los coeficientes son datos de la teoría ELP-2000/82, de Chapront) |
+| ΔT (TT − UT) | IERS, valores medidos | Dominio público |
+| Elementos de los cometas | JPL Horizons (osculantes en el perihelio de cada aparición) y JPL Small-Body Database (M1, K1), consultados el 27–28/10/2026 | Dominio público (NASA/JPL) |
+| TLE de la ISS (NORAD 25544) | CelesTrak (se renueva al arrancar si hay red) | Datos públicos de NORAD/18 SDS |
+| Medidas de la ISS | NASA — International Space Station Facts and Figures | Dominio público (NASA) |
+| Núcleos de los cometas | NASA y ESA (Giotto, Rosetta, Deep Impact) | Datos científicos publicados |
+| Verificación de eclipses | NASA GSFC — catálogo de eclipses (Espenak) | Dominio público (NASA) |
+
+## Bibliotecas de cálculo
+
+| Biblioteca | Uso | Licencia |
+|---|---|---|
+| `satellite.js` 7.1.0 | SGP4 para la ISS (solo los módulos de JavaScript, vía `src/astro/sgp4.ts`) | MIT |
+
 ## Organización en `public/`
 
 ```

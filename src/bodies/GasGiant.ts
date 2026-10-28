@@ -23,6 +23,7 @@ import {
   instanceIndex,
   max,
   mix,
+  modelWorldMatrix,
   modelWorldMatrixInverse,
   sin,
   smoothstep,
@@ -209,6 +210,8 @@ export class GasGiant extends BaseBody {
       const local = this.spinToBody(restOf(stateAttr));
       rgb = rgb.mul(ringShadow(local, sunLocal, rings.bands));
     }
+    // Tránsitos de sombra (§5.3): las de las lunas, puntos negros que cruzan el disco.
+    if (this.shadow) rgb = rgb.mul(this.shadow.lightNode(modelWorldMatrix.mul(vec4(restOf(stateAttr), 0)).xyz.div(this.objectScale)));
     material.colorNode = vec4(rgb, 1);
     return field;
   }

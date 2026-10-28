@@ -36,6 +36,8 @@ export class Atmosphere {
     flatten = 1,
     /** 1 = normal, 0 = invisible (la cámara está dentro de la capa). */
     fade: FloatNode = float(1),
+    /** Luz del Sol con los eclipses (§5.3), por dirección en mundo. */
+    light?: (point: Vec3Node) => Vec3Node,
   ) {
     this.field = new ParticleField(count, 'additive', 3);
     const dirAttr = tier.buffer(shellPoints(count)).toAttribute();
@@ -70,7 +72,7 @@ export class Atmosphere {
       .mul(tier.appear)
       .mul(fade);
 
-    material.colorNode = vec4(tint.mul(intensity), 1);
+    material.colorNode = vec4(light ? tint.mul(intensity).mul(light(n)) : tint.mul(intensity), 1);
     material.opacityNode = softDisc();
   }
 }

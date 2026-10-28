@@ -17,4 +17,7 @@ Sistema solar navegable hecho de partículas (Three.js WebGPU + TSL, TypeScript,
 - Superficie (§7.2): nada de coordenadas absolutas en float32 a escala de metros. Parte entera y fracción por separado, valores relativos al centro del chunk (float64 en la CPU) y nunca restar dos números casi iguales. Cualquier cambio en `surface/terrain.ts` va en la CPU y en la GPU a la vez.
 - La cámara (órbita y vuelo libre) se guarda respecto a su cuerpo de referencia en km; de escena a km, solo `ScaleSystem.inverseLocalDistance` (§9).
 - Interfaz (§11): componentes sin framework en `ui/`, cifras con `setText` (solo si cambian), acento `--body`. Para mirarla con el panel pequeño: `?quality=alta` (sin ajuste automático) y ampliar por zonas con `transform: scale(s) translate(-x, -y)` en `<html>`.
+- Sombras de eclipse (§5.3): la geometría va con posiciones y radios reales en km, nunca en unidades de escena, y la misma fórmula en la CPU (`sunCoverage`) y en la GPU (`bodies/Shadows.ts`).
+- Cometas: coma y colas se colocan respecto al núcleo con `distanceNode` del propio cometa (su `radiusKm` es el de referencia de la coma, §4.3).
+- `satellite.js` se importa desde `astro/sgp4.ts`, no del paquete: su índice arrastra un WebAssembly que rompe el build.
 - Al terminar una fase, marcarla en `docs/PLAN.md`.

@@ -125,6 +125,8 @@ export interface SurfaceLook {
   /** 0 = luz con la normal de la esfera (como el globo), 1 = normal del terreno. */
   terrainLight: FloatNode;
   water: boolean;
+  /** Luz del Sol con los eclipses (§5.3), por dirección en mundo desde el centro. */
+  light?: (point: Vec3Node) => Vec3Node;
 }
 
 export interface SurfaceView {
@@ -590,6 +592,8 @@ export class Surface {
     const occlusion = mix(float(1), float(0.5).add(b.facing.mul(0.5)), ballAmount);
     const bead = mix(float(1), b.facing, ballAmount);
     let rgb = surf.xyz.mul(lit.add(rockyLook.ambient)).mul(occlusion).mul(rockyLook.dotGain);
+    const sun = look.light?.(radial);
+    if (sun) rgb = rgb.mul(sun);
 
     // Luces de ciudades en el lado nocturno.
     const nightSide = float(1).sub(smoothstep(-0.12, 0.06, ndl));
@@ -598,7 +602,8 @@ export class Surface {
       // Reflejo del Sol en el agua.
       const view = normalize(world.negate());
       const h = normalize(look.sunDirection.add(view));
-      const spec = pow(max(radial.dot(h), 0), 160).mul(surf.w).mul(sphereLit).mul(rockyLook.specular);
+      let spec = pow(max(radial.dot(h), 0), 160).mul(surf.w).mul(sphereLit).mul(rockyLook.specular);
+      if (sun) spec = spec.mul(sun.x);
       rgb = rgb.add(vec3(1.0, 0.95, 0.85).mul(spec).mul(bead));
     }
     material.colorNode = vec4(rgb, 1);

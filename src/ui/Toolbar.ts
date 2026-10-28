@@ -9,6 +9,7 @@ export interface ToolActions {
   onToggleOrbits(): void;
   onToggleLabels(): void;
   onToggleFly(): void;
+  onEvents(): void;
   onHelp(): void;
   onSettings(): void;
   onHideUi(): void;
@@ -64,6 +65,7 @@ export class Toolbar {
       el('span', 'ui-sep'),
       this.fly,
       el('span', 'ui-sep'),
+      iconButton('eclipse', 'Eclipses y eventos', actions.onEvents, 'C'),
       iconButton('settings', 'Ajustes', actions.onSettings),
       iconButton('help', 'Ayuda y controles', actions.onHelp, '?'),
       iconButton('eye', 'Ocultar la interfaz', actions.onHideUi, 'U'),

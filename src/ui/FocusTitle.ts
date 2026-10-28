@@ -11,6 +11,8 @@ export interface TitleState {
   name: string;
   kicker: string;
   altitudeKm: number;
+  /** Rótulo de la altitud («Altitud»; en los cometas, «Al núcleo»). */
+  altitudeLabel: string;
   sunDistanceKm: number;
   /** Velocidad en vuelo libre (km/s), o null en órbita. */
   speedKmS: number | null;
@@ -85,6 +87,7 @@ export class FocusTitle {
       setText(this.name, s.name);
       this.replay();
     }
+    setText(this.altitude[0], s.altitudeLabel);
     setQuantity(this.altitude, distanceParts(s.altitudeKm));
     if (s.speedKmS !== null) {
       setText(this.second[0], 'Velocidad');

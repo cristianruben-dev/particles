@@ -29,8 +29,8 @@ export class Labels {
       layer.append(el);
       this.elements.set(body, el);
     }
-    // Prioridad: Sol, planetas y después lunas.
-    const rank = (b: CelestialBody) => (b.parent === null ? 0 : b.parent.parent === null ? 1 : 2);
+    // Prioridad: Sol, planetas y después lunas, la ISS y los cometas.
+    const rank = (b: CelestialBody) => (b.parent === null ? 0 : b.data.comet ? 3 : b.parent.parent === null ? 1 : 2);
     this.ordered = [...bodies].sort((a, b) => rank(a) - rank(b));
   }
 
@@ -54,7 +54,7 @@ export class Labels {
     const placed: { x: number; y: number }[] = [];
     for (const body of this.ordered) {
       const el = this.elements.get(body)!;
-      let show = this.visible && body !== focus && body.screenRadiusPx < MAX_RADIUS_PX;
+      let show = this.visible && body !== focus && body.object3d.visible && body.screenRadiusPx < MAX_RADIUS_PX;
       let x = 0, y = 0;
       if (show) {
         // La cámara está en el origen: la posición del objeto ya es relativa a ella.

@@ -34,6 +34,8 @@ export interface LocalRay {
   direction: THREE.Vector3;
   /** Radio de influencia en unidades locales. */
   radius: number;
+  /** Intensidad del empuje (0–1): se apaga en los cuerpos pequeños en pantalla. */
+  gain: number;
 }
 
 export class Disturbance {
@@ -42,7 +44,7 @@ export class Disturbance {
   private readonly rayOrigin = uniform(new THREE.Vector3());
   private readonly rayDirection = uniform(new THREE.Vector3(0, 0, -1));
   private readonly radius = uniform(0.1);
-  /** 1 mientras el cursor está encima; 0 deja que todo vuelva a su sitio. */
+  /** Intensidad mientras el cursor está encima (`LocalRay.gain`); 0 deja que todo vuelva a su sitio. */
   private readonly push = uniform(0);
   private readonly dt = uniform(1 / 60);
   private readonly step: THREE.ComputeNode;
@@ -107,7 +109,7 @@ export class Disturbance {
       this.rayDirection.value.copy(ray.direction);
       this.radius.value = ray.radius;
     }
-    this.push.value = ray ? 1 : 0;
+    this.push.value = ray ? ray.gain : 0;
     if (nowSeconds > this.activeUntil) return;
     this.dt.value = Math.min(dt, 1 / 30);
     renderer.compute(this.step);

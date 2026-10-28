@@ -8,10 +8,11 @@
  * - Tras un clic con el ratón el botón suelta el foco: así Espacio sigue pausando y no
  *   repite el clic. Con el teclado (Tab) el foco se queda y se ve.
  */
-import type { BodyId } from '../astro/bodies';
+import { BODIES, type BodyId } from '../astro/bodies';
 import { FACTS } from '../astro/facts';
 import type { FrameStats, Quality } from '../core/Quality';
 import { BodyDock, type HudBody } from './BodyDock';
+import { EventsPanel, type EventsSource } from './EventsPanel';
 import { accentColor, el } from './dom';
 import { FocusTitle, type TitleActions } from './FocusTitle';
 import { InfoPanel, bodyKicker, type InfoLive } from './InfoPanel';
@@ -25,6 +26,8 @@ export type { HudBody } from './BodyDock';
 
 export interface HudActions extends TimeActions, TitleActions {
   bodies: HudBody[];
+  /** Eclipses, tránsitos y cometas para el calendario. */
+  events: Omit<EventsSource, 'onClose'>;
   quality: Quality;
   /** Preferencias del panel de ajustes. */
   toggles: SettingsToggle[];
@@ -64,6 +67,7 @@ export class Hud {
   private readonly perf: PerfMeter;
   private readonly settings: SettingsPanel;
   private readonly info: InfoPanel;
+  private readonly events: EventsPanel;
   private readonly help: HelpOverlay;
   private readonly travel = new TravelCard();
   private readonly fly: HTMLElement;
@@ -89,11 +93,13 @@ export class Hud {
       onToggleOrbits: actions.onToggleOrbits,
       onToggleLabels: actions.onToggleLabels,
       onToggleFly: actions.onToggleFly,
+      onEvents: () => this.toggleEvents(),
       onHelp: () => this.toggleHelp(),
       onSettings: () => this.toggleSettings(),
       onHideUi: () => this.toggleHidden(),
     });
     this.info = new InfoPanel({ onClose: () => this.info.setOpen(false), onLand: actions.onLand });
+    this.events = new EventsPanel({ ...actions.events, onClose: () => this.events.setOpen(false) });
     this.help = new HelpOverlay(() => this.help.setOpen(false));
 
     this.fly = el('div', 'ui-fly');
@@ -117,7 +123,7 @@ export class Hud {
       region('ui-tl', this.title.el),
       region('ui-tr', this.perf.el, this.settings.el),
       region('ui-bottom', this.time.el, region('ui-bc', this.coach.el, this.dock.el), this.tools.el),
-      region('ui-right', this.info.el),
+      region('ui-right', this.info.el, this.events.el),
       this.travel.el,
       this.fly,
       this.toasts.el,
@@ -149,6 +155,7 @@ export class Hud {
     if (e.key === 'Escape') {
       if (this.help.open) this.help.setOpen(false);
       else if (this.settings.open) this.settings.setOpen(false);
+      else if (this.events.open) this.events.setOpen(false);
       else if (this.info.open) this.info.setOpen(false);
       else if (this.hidden) this.toggleHidden();
       else return false;
@@ -157,6 +164,7 @@ export class Hud {
     if (e.key === '?') this.toggleHelp();
     else if (key === 'u') this.toggleHidden();
     else if (key === 'i') this.toggleInfo();
+    else if (key === 'c') this.toggleEvents();
     else return false;
     return true;
   }
@@ -185,11 +193,14 @@ export class Hud {
 
     if (s.focusId !== this.activeId) this.setActiveBody(s.focusId, s.landable);
     const site = FACTS[s.focusId].site;
+    // En un cometa el radio es el de referencia de la coma: cuenta la distancia al núcleo.
+    const comet = BODIES[s.focusId].kind === 'comet';
     this.title.update({
       id: s.focusId,
       name: s.focusName,
       kicker: bodyKicker(s.focusId),
-      altitudeKm: s.altitudeKm,
+      altitudeKm: comet ? s.altitudeKm + BODIES[s.focusId].radiusKm : s.altitudeKm,
+      altitudeLabel: comet ? 'Al núcleo' : 'Altitud',
       sunDistanceKm: s.focusId === 'sun' ? 695_700 : s.sunDistanceKm,
       speedKmS: s.speedKmS,
       landable: s.landable,
@@ -201,18 +212,33 @@ export class Hud {
     this.tools.update(s.tools);
     this.info.landDisabled = s.descending;
     this.info.update(s, now);
+    this.events.update(s.time.date.getTime());
     this.settings.update({ particles: s.particles, pixelRatio: s.pixelRatio, backend: s.backend, fps: s.stats.fps, frameMs: s.stats.frameMs }, now);
   }
 
-  /** La ficha y los ajustes comparten el lado derecho: abrir uno cierra el otro. */
+  /** La ficha, los eventos y los ajustes comparten el lado derecho: abrir uno cierra los otros. */
   private toggleInfo(): void {
     this.info.setOpen(!this.info.open);
-    if (this.info.open) this.settings.setOpen(false);
+    if (this.info.open) {
+      this.settings.setOpen(false);
+      this.events.setOpen(false);
+    }
   }
 
   private toggleSettings(): void {
     this.settings.setOpen(!this.settings.open);
-    if (this.settings.open) this.info.setOpen(false);
+    if (this.settings.open) {
+      this.info.setOpen(false);
+      this.events.setOpen(false);
+    }
+  }
+
+  private toggleEvents(): void {
+    this.events.setOpen(!this.events.open);
+    if (this.events.open) {
+      this.info.setOpen(false);
+      this.settings.setOpen(false);
+    }
   }
 
   private toggleHelp(): void {

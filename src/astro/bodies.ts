@@ -7,6 +7,8 @@
  * - Lunas: JPL "Planetary Satellite Mean Elements" (época 2000-01-01.5 TDB).
  */
 
+import type { CometId } from './comets';
+
 export type BodyId =
   | 'sun'
   | 'mercury'
@@ -25,10 +27,12 @@ export type BodyId =
   | 'neptune'
   | 'triton'
   | 'pluto'
-  | 'charon';
+  | 'charon'
+  | 'iss'
+  | CometId;
 
 /** Qué clase de `bodies/` renderiza el cuerpo. */
-export type BodyKind = 'star' | 'rocky' | 'gas' | 'moon';
+export type BodyKind = 'star' | 'rocky' | 'gas' | 'moon' | 'station' | 'comet';
 
 /** Elemento orbital: valor en J2000 y tasa de cambio por siglo juliano. */
 export interface OrbitalElement {
@@ -117,9 +121,27 @@ export interface BodyData {
    * comprimida es logarítmica alrededor del cuerpo (§4.3). Por defecto 20.
    */
   systemRadii?: number;
+  /** Cometas: sus elementos en `astro/comets.ts`. */
+  comet?: CometId;
+  /** Distancia al enfocarlo (radios desde el centro); por defecto 3,2. */
+  viewRadii?: number;
 }
 
 const el = (value: number, ratePerCentury: number): OrbitalElement => ({ value, ratePerCentury });
+
+/**
+ * Radio de referencia de la coma de los cometas (km): fija su escala (§4.3). Con 6.000 km la
+ * coma queda del tamaño de la Tierra en la escala comprimida y una cola de 0,3 UA mide un
+ * tercio de la órbita de la Tierra: se ve desde el sistema entero.
+ */
+const COMA_REFERENCE_KM = 6_000;
+const comet = (id: CometId, name: string): BodyData => ({
+  id, name, kind: 'comet', parent: 'sun', comet: id,
+  radiusKm: COMA_REFERENCE_KM, axialTiltDeg: 0, rotationPeriodH: 0, color: 0xc4f1ff,
+  // Sin orientación propia (bodies/Comet.ts): las colas van en ejes de la escena.
+  pole: pole(0, 0, 90, 0, 0, 0),
+  viewRadii: 300,
+});
 const pole = (ra: number, raRate: number, dec: number, decRate: number, w0: number, wRate: number): PoleData =>
   ({ ra, raRate, dec, decRate, w0, wRate });
 
@@ -155,8 +177,9 @@ export const BODIES: Record<BodyId, BodyData> = {
   earth: {
     id: 'earth', name: 'Tierra', kind: 'rocky', parent: 'sun',
     radiusKm: 6_371.0, axialTiltDeg: 23.44, rotationPeriodH: 23.9345, color: 0x3a6fd8,
-    // El giro real sale del tiempo sidéreo (ephemeris.ts); el polo es el del ecuador J2000.
-    pole: pole(0, 0, 90, 0, 190.147, 360.9856235),
+    // El giro real sale del tiempo sidéreo (ephemeris.ts). Polo de la IAU con la precesión
+    // (−ζ y 90° − θ de la IAU 1976): en 2026 se ha movido 0,15° y el nodo 0,17°.
+    pole: pole(0, -0.641, 90, -0.557, 190.147, 360.9856235),
     orbit: {
       a: el(1.00000261, 0.00000562), e: el(0.01671123, -0.00004392), i: el(-0.00001531, -0.01294668),
       L: el(100.46457166, 35999.37244981), longPeri: el(102.93768193, 0.32327364), longNode: el(0, 0),
@@ -295,4 +318,22 @@ export const BODIES: Record<BodyId, BodyData> = {
       meanMotion: 56.3625225, anomalisticDays: 6.387222, nodeYears: 0, laplacePole: null,
     },
   },
+  iss: {
+    // Radio: media armadura (109 m). Órbita con SGP4 (astro/iss.ts) y actitud de vuelo propia
+    // (bodies/Station.ts): el polo no se usa.
+    id: 'iss', name: 'ISS', kind: 'station', parent: 'earth',
+    radiusKm: 0.0545, axialTiltDeg: 0, rotationPeriodH: 92.9 / 60, color: 0xe4e9f2,
+    pole: pole(0, 0, 90, 0, 0, 0),
+  },
+  halley: comet('halley', 'Halley'),
+  encke: comet('encke', 'Encke'),
+  churyumov: comet('churyumov', '67P'),
+  halebopp: comet('halebopp', 'Hale-Bopp'),
+  neowise: comet('neowise', 'NEOWISE'),
+  tsuchinshan: comet('tsuchinshan', 'Tsuchinshan-ATLAS'),
+  atlas3i: comet('atlas3i', '3I/ATLAS'),
+  bok: comet('bok', 'Bok'),
 };
+
+/** Los cometas, en el orden del navegador. */
+export const COMET_IDS: CometId[] = ['halley', 'encke', 'churyumov', 'halebopp', 'neowise', 'tsuchinshan', 'atlas3i', 'bok'];

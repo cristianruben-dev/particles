@@ -2,7 +2,7 @@
  * Contrato común de todos los cuerpos. Ver docs/ARQUITECTURA.md §8.
  */
 import type { Color, Object3D, PerspectiveCamera, Quaternion, Vector3, WebGPURenderer } from 'three/webgpu';
-import type { BodyData } from '../astro/bodies';
+import type { BodyData, BodyId } from '../astro/bodies';
 import type { Vec3d } from '../astro/frames';
 import type { FloatingOrigin } from '../core/FloatingOrigin';
 import type { ScaleSystem } from '../scale/ScaleSystem';
@@ -24,6 +24,8 @@ export interface FrameContext {
   nowSeconds: number;
   /** Cámara (en el origen; para el frustum de la superficie). */
   camera: PerspectiveCamera;
+  /** Otro cuerpo de la escena (para las sombras de eclipse). */
+  body(id: BodyId): CelestialBody | undefined;
 }
 
 export interface CelestialBody {

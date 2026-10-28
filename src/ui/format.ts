@@ -40,6 +40,7 @@ export function formatDuration(hours: number): string {
   let whole = Math.floor(h);
   let min = Math.round((h - whole) * 60);
   if (min === 60) [whole, min] = [whole + 1, 0];
+  if (!whole) return `${min} min`;
   return min ? `${whole} h ${min} min` : `${whole} h`;
 }
 

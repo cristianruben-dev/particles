@@ -41,6 +41,8 @@ export class CloudLayer {
     objectScale: FloatNode,
     /** 1 = normal, 0 = invisible (la cámara ha bajado por debajo de la capa). */
     fade: FloatNode = float(1),
+    /** Luz del Sol con los eclipses (§5.3), por dirección en mundo. */
+    light?: (point: Vec3Node) => Vec3Node,
   ): Promise<CloudLayer> {
     const baked = await bakeSphere({
       count,
@@ -91,7 +93,8 @@ export class CloudLayer {
     const shaped = mix(flatLit, ballLit, visibility);
     // Parte difusa por dispersión (las nubes nunca son negras del todo de día).
     const lit = shaped.mul(0.75).add(0.25).mul(daylight).add(0.01);
-    material.colorNode = vec4(vec3(0.97, 0.98, 1.0).mul(lit), 1);
+    const rgb = vec3(0.97, 0.98, 1.0).mul(lit);
+    material.colorNode = vec4(light ? rgb.mul(light(worldNormal(dir))) : rgb, 1);
     const puff = smoothstep(1, 0.55, b.r2);
     material.opacityNode = puff.mul(smoothstep(0.15, 0.95, densityAttr.x)).mul(cloudLook.opacity).mul(appear).mul(fade);
 

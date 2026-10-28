@@ -27,6 +27,7 @@ export const icons = {
   ascend: svg('<path d="M12 15.2V3.8M7.4 8.4 12 3.8l4.6 4.6M4 20h16"/>'),
   eye: svg('<path d="M2.6 12S6 5.6 12 5.6 21.4 12 21.4 12 18 18.4 12 18.4 2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.8"/>'),
   keyboard: svg('<rect x="2.8" y="6" width="18.4" height="12" rx="2.4"/><path d="M6.8 10h.01M10.3 10h.01M13.7 10h.01M17.2 10h.01M7.5 14h9"/>'),
+  eclipse: svg(`<circle cx="10" cy="12" r="6.6"/><circle cx="14.2" cy="12" r="6.6" ${fill} opacity=".9"/>`),
   sparkle: svg('<path d="M12 3.5c.5 4.3 1.9 6.9 8.5 8.5-6.6 1.6-8 4.2-8.5 8.5-.5-4.3-1.9-6.9-8.5-8.5 6.6-1.6 8-4.2 8.5-8.5z"/>'),
 } as const;
 

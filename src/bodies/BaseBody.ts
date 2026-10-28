@@ -17,6 +17,7 @@ import { pixelAngle, softDisc } from '../particles/nodes';
 import type { FloatNode, Vec3Node } from '../particles/nodes';
 import type { CelestialBody, FrameContext } from './CelestialBody';
 import { DetailTier, type TierKind } from './DetailTier';
+import { EclipseShadow } from './Shadows';
 
 /** Segundos que tarda un cuerpo en condensarse desde el polvo al cargar. */
 const APPEAR_SECONDS = 2.2;
@@ -24,6 +25,13 @@ const APPEAR_SECONDS = 2.2;
 const UPGRADE_SECONDS = 1.4;
 /** Diámetro del punto lejano (px CSS). */
 const MARKER_PX = 3.5;
+/**
+ * Perturbación del ratón (§6.4): radio de influencia máximo en radios del cuerpo, y radio en
+ * pantalla (px) entre los que entra. De lejos, los 90 px del cursor abarcaban el cuerpo entero
+ * y el empuje, proporcional a ese radio, lo inflaba al doble o al triple.
+ */
+const DISTURB_MAX_RADII = 0.3;
+const DISTURB_FADE_PX: [number, number] = [40, 140];
 
 export abstract class BaseBody implements CelestialBody {
   /**
@@ -65,7 +73,14 @@ export abstract class BaseBody implements CelestialBody {
 
   private readonly markerAlpha = uniform(0);
 
+  /** Brillo del punto lejano (los cometas inactivos apenas se ven). */
+  protected markerGain = 1;
+
+  /** Sombras de eclipse que pueden caer sobre el cuerpo (§5.3), o null. */
+  protected readonly shadow: EclipseShadow | null;
+
   constructor(readonly data: BodyData, readonly parent: CelestialBody | null) {
+    this.shadow = EclipseShadow.for(data.id);
     this.object3d.name = data.id;
     this.object3d.add(this.spin);
     this.object3d.add(this.createMarker());
@@ -153,8 +168,12 @@ export abstract class BaseBody implements CelestialBody {
     const toSun = eclToScene({ x: -this.positionKm.x, y: -this.positionKm.y, z: -this.positionKm.z });
     this.sunDirection.value.set(toSun.x, toSun.y, toSun.z).normalize();
 
+    this.shadow?.update(this, ctx.body, ctx.timeMs);
+
     this.radiusPx = projectedRadiusPx(this.sceneRadius, this.object3d.position.length());
-    this.markerAlpha.value = 1 - THREE.MathUtils.smoothstep(this.radiusPx, 1.5, 4);
+    // De lejos, el punto también se apaga en un eclipse (Ío al entrar en la sombra de Júpiter).
+    const light = this.shadow ? this.shadow.lightAt({ x: 0, y: 0, z: 0 }) : 1;
+    this.markerAlpha.value = (1 - THREE.MathUtils.smoothstep(this.radiusPx, 1.5, 4)) * (0.15 + 0.85 * light) * this.markerGain;
     this.updateTiers(ctx);
   }
 
@@ -218,10 +237,15 @@ export abstract class BaseBody implements CelestialBody {
     const c = this.object3d.position;
     const along = c.dot(dir);
     if (along <= 0) return null;
+    const gain = THREE.MathUtils.smoothstep(this.radiusPx, DISTURB_FADE_PX[0], DISTURB_FADE_PX[1]);
+    if (gain <= 0) return null;
     const missSq = c.lengthSq() - along * along;
     const bodyRadius = this.sceneRadius * 1.1;
     const hitDistance = missSq < bodyRadius * bodyRadius ? along - Math.sqrt(bodyRadius * bodyRadius - missSq) : along;
-    const worldRadius = disturbanceLook.radiusPx * pixelAngle.value * Math.max(hitDistance, 1e-6);
+    const worldRadius = Math.min(
+      disturbanceLook.radiusPx * pixelAngle.value * Math.max(hitDistance, 1e-6),
+      DISTURB_MAX_RADII * this.sceneRadius,
+    );
     if (Math.sqrt(Math.max(missSq, 0)) > bodyRadius + worldRadius) return null;
 
     space.updateWorldMatrix(true, false);
@@ -230,6 +254,7 @@ export abstract class BaseBody implements CelestialBody {
       origin: new THREE.Vector3().applyMatrix4(inverse),
       direction: dir.clone().transformDirection(inverse),
       radius: worldRadius / this.sceneRadius,
+      gain,
     };
   }
 

@@ -27,7 +27,7 @@ export function pickBody(
     // La cámara está en el origen: la posición del objeto ya es relativa a ella.
     const c = body.object3d.position;
     const dist = c.length();
-    if (dist <= body.sceneRadius) continue;
+    if (dist <= body.sceneRadius || !body.object3d.visible) continue;
     const angle = ray.angleTo(c);
     const angularRadius = Math.asin(body.sceneRadius / dist);
     if (angle < Math.max(angularRadius, MIN_PICK_PX * pxAngle) && dist < bestDistance) {

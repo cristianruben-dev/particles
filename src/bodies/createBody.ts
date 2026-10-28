@@ -4,9 +4,11 @@
 import type { BodyData } from '../astro/bodies';
 import type { ScaleSystem } from '../scale/ScaleSystem';
 import type { CelestialBody } from './CelestialBody';
+import { Comet } from './Comet';
 import { GasGiant } from './GasGiant';
 import { GAS_PRESETS, ROCKY_PRESETS } from './presets';
 import { RockyPlanet } from './RockyPlanet';
+import { Station } from './Station';
 import { Sun } from './Sun';
 
 /** Devuelve null para cuerpos sin preset visual. */
@@ -23,5 +25,9 @@ export function createBody(data: BodyData, parent: CelestialBody | null, scale: 
       const preset = GAS_PRESETS[data.id];
       return preset ? new GasGiant(data, parent, preset, scale) : null;
     }
+    case 'station':
+      return new Station(data, parent);
+    case 'comet':
+      return new Comet(data, parent, scale);
   }
 }

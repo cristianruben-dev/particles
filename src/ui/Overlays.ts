@@ -113,6 +113,7 @@ const SHORTCUTS: [string, [string, string][]][] = [
     ['N', 'Volver a ahora'],
     ['T', 'Aterrizar · volver a la órbita'],
     ['I', 'Ficha del cuerpo'],
+    ['C', 'Eclipses, tránsitos y cometas'],
     ['E · O · L', 'Escala · órbitas · nombres'],
     ['U', 'Ocultar la interfaz'],
   ]],

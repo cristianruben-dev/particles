@@ -10,7 +10,7 @@ import type { Vec3d } from '../astro/frames';
 import { config } from '../config';
 import { bakeSphere, type BakeTexture } from '../particles/bake';
 import { Disturbance } from '../particles/Disturbance';
-import { ball, ballDepth, ballSprite, frontFacing, hardDisc, viewDirection, worldNormal } from '../particles/nodes';
+import { ball, ballDepth, ballSprite, frontFacing, hardDisc, viewDirection, worldNormal, type Vec3Node } from '../particles/nodes';
 import { detailFraction } from '../particles/LodManager';
 import { ParticleField } from '../particles/ParticleField';
 import { Surface } from '../surface/Surface';
@@ -151,16 +151,17 @@ export class RockyPlanet extends BaseBody {
     tier.total = count;
     if (kind === 'full') this.globe = globe;
 
+    const light = this.shadow ? (q: Vec3Node) => this.shadow!.lightNode(q) : undefined;
     if (p.atmosphere) {
       const atmosphere = new Atmosphere(
-        tier, p.atmosphere, layerCount(p.atmosphere.count), this.sunDirection, this.objectScale, 1, this.airFade,
+        tier, p.atmosphere, layerCount(p.atmosphere.count), this.sunDirection, this.objectScale, 1, this.airFade, light,
       );
       tier.addField(atmosphere.field, false);
     }
 
     if (p.clouds) {
       const clouds = await CloudLayer.create(
-        tier, p.clouds, layerCount(p.clouds.count), this.sunDirection, this.objectScale, this.cloudFade,
+        tier, p.clouds, layerCount(p.clouds.count), this.sunDirection, this.objectScale, this.cloudFade, light,
       );
       tier.roots.push({ object: clouds.group, spin: true });
       tier.fields.push({ field: clouds.field, scale: 1 });
@@ -230,6 +231,9 @@ export class RockyPlanet extends BaseBody {
     const bead = mix(float(1), b.facing, ballAmount);
     const albedo = colorAttr.xyz;
     let rgb = albedo.mul(lit.add(rockyLook.ambient)).mul(occlusion).mul(rockyLook.dotGain);
+    // Eclipse (§5.3): la sombra de la Luna sobre la Tierra, la de la Tierra sobre la Luna…
+    const sun = this.shadow?.lightNode(n);
+    if (sun) rgb = rgb.mul(sun);
 
     if (p.textures.night) {
       // Luces de ciudades solo en el lado nocturno, cálidas y en HDR para que hagan bloom.
@@ -242,7 +246,8 @@ export class RockyPlanet extends BaseBody {
       // Reflejo del Sol en el agua (Blinn-Phong con la normal del planeta: un brillo continuo).
       const v = viewDirection(center);
       const h = this.sunDirection.add(v).normalize();
-      const spec = pow(max(n.dot(h), 0), 160).mul(colorAttr.w).mul(planetLit).mul(rockyLook.specular);
+      let spec = pow(max(n.dot(h), 0), 160).mul(colorAttr.w).mul(planetLit).mul(rockyLook.specular);
+      if (sun) spec = spec.mul(sun.x);
       rgb = rgb.add(vec3(1.0, 0.95, 0.85).mul(spec).mul(bead));
     }
 
@@ -299,6 +304,7 @@ export class RockyPlanet extends BaseBody {
         planetCenter: this.planetCenter,
         terrainLight: this.terrainLight,
         water: p.waterBelow !== undefined,
+        light: this.shadow ? (q) => this.shadow!.lightNode(q) : undefined,
       });
       this.spin.add(this.surface.group);
     } else if (this.surface && (!this.isFocused || !full || fraction < SURFACE_EXIT)) {
@@ -360,7 +366,9 @@ export class RockyPlanet extends BaseBody {
     const d = Math.max(1, altitude + 1);
     sky.dip = -Math.sqrt(1 - 1 / (d * d));
     const sunHeight = up.dot(this.sunDirection.value);
-    const day = smooth(sunHeight, -0.15, 0.25);
+    // En la totalidad de un eclipse el cielo se oscurece y salen las estrellas.
+    const eclipse = this.shadow ? this.shadow.lightAt({ x: up.x, y: up.y, z: up.z }) : 1;
+    const day = smooth(sunHeight, -0.15, 0.25) * eclipse;
 
     // Suelo: el albedo bajo la cámara, oscurecido.
     const ground = this.groundColor(up);
