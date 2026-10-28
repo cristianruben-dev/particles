@@ -112,10 +112,13 @@ Lunas y cámara usan **la misma función**, así que la cámara nunca se cree fu
 - `satellites.ts`: resto de lunas con los **elementos medios de JPL** (época J2000) en su plano de Laplace o en el ecuador del planeta, con giro de ápsides y precesión del nodo. Titán lleva ω y M reajustados y Tritón va sin precesión del nodo: con los valores publicados se desviaban 157° y 59° de JPL Horizons.
 - `orientation.ts`: **orientación IAU** (WGCCRE 2015, kernel `pck00011.tpc` de NAIF) de todos los cuerpos: polo (α0, δ0 con su deriva) y meridiano principal `W = W0 + Ẇ·d`. Marco del cuerpo: x hacia el nodo Q del ecuador sobre el ecuador ICRF, y hacia el polo; el giro W alrededor de y lleva x a la longitud 0°. Así Urano va de lado, el polo de Saturno (y sus anillos) tiene la inclinación de la fecha y las lunas síncronas miran a su planeta. Las órbitas de las lunas usan el mismo plano.
 - `ephemeris.ts`: posición relativa al padre y ángulo de giro.
-  - **Tierra**: polo del ecuador J2000 y giro = tiempo sidéreo de Greenwich (GMST) − 90° (su nodo Q está en RA 90°). Verificado: punto subsolar en lon +1,5° y lat −0,2° el 20/03/2026 a las 12:00 UTC (≈ ecuación del tiempo), y lat ±23,44° en los solsticios.
+  - **Tierra**: polo del ecuador J2000 y giro = tiempo sidéreo de Greenwich (GMST) − 90° (su nodo Q está en RA 90°). Verificado con el código de la fase 2 (los mismos valores que con el de la fase 1): punto subsolar en lon +1,53° y lat −0,19° el 20/03/2026 a las 12:00 UTC (≈ ecuación del tiempo), lon −88,5° a las 18:00 y lat ±23,44° en los solsticios.
   - **Luna**: rotación síncrona, lon 0° hacia la Tierra (queda la libración en latitud, real).
   - Resto: W de la IAU.
-- **Verificación contra JPL Horizons** (vectores eclípticos J2000, 27/10/2026): planetas y Plutón con error angular < 0,08°; Luna 0,19°; Ío, Europa, Ganímedes y Calisto ~0,1°; Caronte 0,15°; Titán < 0,4° y Tritón < 7° (en 2000, 2013 y 2026).
+- **Verificación contra JPL Horizons** (27/10/2026):
+  - Posiciones (vectores eclípticos J2000): planetas y Plutón con error angular < 0,08°; Luna 0,19°; Ío, Europa, Ganímedes y Calisto ~0,1°; Caronte 0,15°; Titán < 0,4° y Tritón < 7° (en 2000, 2013 y 2026).
+  - Orientación (punto subsolar, con el tiempo de luz desde la Tierra): latitud con error ≤ 0,26° en Mercurio, Venus, Júpiter, Saturno, Urano, Neptuno, Plutón, Ío y Titán, y 1,2° en Marte (su polo IAU tiene términos periódicos que no se incluyen); longitud dentro de ~1° (Horizons da longitudes oeste para los cuerpos de giro directo y este para los retrógrados). El Sol está 8° al sur del plano de los anillos de Saturno, como corresponde tras el cruce de 2025.
+  - La Luna muestra a la Tierra su lon 0° (lat −4,9°: libración real).
 - Convención de texturas: lon = atan2(−z, x) en el espacio local del cuerpo (este = −z), así un giro positivo alrededor de +y es hacia el este.
 - `units.ts`: constantes (UA en km, J2000, segundos por día) y conversión de fecha a siglos julianos.
 
@@ -171,7 +174,7 @@ El criterio es el **tamaño angular** del cuerpo en pantalla (radio proyectado e
 | **Superficie** (fase 3) | Órbita baja → suelo | Completo de fondo + chunks del quadtree alrededor de la cámara (§7) | 2M–6M en total |
 
 - El completo se empieza a hornear **al elegir el cuerpo**, así que se solapa con el viaje. Al llegar entra con la **condensación** (`BaseBody.condense`, 1,4 s) y la vista previa se oculta al terminar.
-- Se **libera** cuando lleva 15 s sin foco y por debajo de 60 px (`config.lod`). three r186 no tiene API pública para soltar buffers de almacenamiento: `particles/gpu.ts` usa el registro interno del renderer, aislado en una función. Verificado con `renderer.info.memory`: al alejarse de Júpiter la memoria vuelve exactamente al valor previo.
+- Se **libera** cuando lleva 15 s sin foco y por debajo de 60 px (`config.lod`). three r186 no tiene API pública para soltar buffers de almacenamiento: `particles/gpu.ts` usa el registro interno del renderer, aislado en una función. Verificado con `renderer.info.memory`: al alejarse de Júpiter la memoria vuelve exactamente al valor previo (119 → 69 MB), y al volver se hornea de nuevo y se ve sin errores de WebGPU.
 - Dentro de cada nivel sigue el LOD por densidad. Las capas con otra área (anillos) llevan su propio factor de fracción.
 - Pendiente: presupuesto global de partículas entre cuerpos (hoy no hace falta: solo hay uno o dos completos a la vez).
 

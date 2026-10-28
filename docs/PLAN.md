@@ -69,9 +69,9 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 
 **Hecho cuando:**
 - [x] Se puede viajar a cualquier planeta desde la lista o con clic (botones, teclas 0–9, clic en el cuerpo o en su nombre).
-- [x] El cambio de escala comprimida ↔ real es fluido y sin saltos (comprobado con capturas durante la transición).
+- [x] El cambio de escala comprimida ↔ real es fluido y sin saltos: medido frame a frame desde Júpiter, el mayor salto de la cámara y de cada cuerpo (Ío, Calisto, Saturno, Tierra, Neptuno) es el 0,96 % de su recorrido total, lo que da la curva suave de 2,5 s.
 - [ ] Ningún planeta "tiembla" a ninguna distancia: el origen flotante lo garantiza por diseño, pero falta mirarlo en escala real cerca de Neptuno y Plutón con la ventana delante. Las líneas de órbita (puntos en float32 relativos al Sol) se apagan cerca de cada cuerpo por si acaso.
-- [x] Las posiciones coinciden con JPL Horizons (27/10/2026, vectores eclípticos J2000): planetas y Plutón < 0,08°; Luna 0,19°; galileanas ~0,1°; Caronte 0,15°; Titán < 0,4°; Tritón < 7° (luna, fuera del criterio).
+- [x] Las posiciones coinciden con JPL Horizons (27/10/2026, vectores eclípticos J2000): planetas y Plutón < 0,08°; Luna 0,19°; galileanas ~0,1°; Caronte 0,15°; Titán < 0,4°; Tritón < 7° (luna, fuera del criterio). La orientación también (punto subsolar de 10 cuerpos, latitud ≤ 0,26° salvo Marte, 1,2°).
 - [ ] 60 fps: pendiente de medir con la ventana delante, como en la fase 1. En el panel del navegador, sin estar delante, se vieron 60–100 fps en las vistas normales.
 
 **Pendientes detectados en la fase 2:**
