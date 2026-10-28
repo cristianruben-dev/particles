@@ -24,7 +24,7 @@ export class CameraRig {
     readonly origin: FloatingOrigin,
     readonly scale: ScaleSystem,
   ) {
-    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.01, 1e7);
+    this.camera = new THREE.PerspectiveCamera(50, aspect, 0.01, 1e10);
   }
 
   /** Posición de la cámara en escena (la del origen flotante). */

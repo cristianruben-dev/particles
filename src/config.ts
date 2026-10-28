@@ -4,18 +4,27 @@
 import type { BodyId } from './astro/bodies';
 
 export const config = {
-  /** Cuerpos activos, cada padre antes que sus hijos. Fase 1: Sol, Tierra y Luna. */
-  bodies: ['sun', 'earth', 'moon'] as BodyId[],
+  /** Cuerpos activos, cada padre antes que sus hijos. */
+  bodies: [
+    'sun', 'mercury', 'venus', 'earth', 'moon', 'mars',
+    'jupiter', 'io', 'europa', 'ganymede', 'callisto',
+    'saturn', 'titan', 'uranus', 'neptune', 'triton', 'pluto', 'charon',
+  ] as BodyId[],
 
   /** Partículas máximas en escena con backend WebGPU. */
   particleBudgetWebGPU: 4_000_000,
   /** Con WebGL2 el presupuesto se reduce (sin compute nativo). */
   particleBudgetWebGL: 2_000_000,
 
-  /** Umbrales de LOD en píxeles de radio proyectado. */
+  /** Niveles de detalle (§6.3), en píxeles CSS de radio proyectado. */
   lod: {
-    pointMaxPx: 4,
-    cloudMaxPx: 150,
+    /** Por encima se hornea el detalle completo (también al enfocar el cuerpo). */
+    fullDetailPx: 160,
+    /** Por debajo, y sin foco durante `releaseSeconds`, se libera el detalle completo. */
+    releasePx: 60,
+    releaseSeconds: 15,
+    /** Partículas de la vista previa (tope). Cubre sin huecos hasta ~200 px de radio. */
+    previewCount: 40_000,
   },
 
   /** Partículas por lado de un chunk de superficie (N×N). */

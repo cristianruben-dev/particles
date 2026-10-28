@@ -6,6 +6,9 @@
  * 2. Orden estratificado por niveles: primero un punto por celda de una rejilla gruesa
  *    (cubo proyectado), luego uno por celda de la siguiente, el doble de fina… Cualquier
  *    prefijo cubre toda la esfera, así que el LOD consiste en dibujar las N primeras.
+ * 3. Dentro de cada nivel, las celdas van en orden de bits invertidos (van der Corput en
+ *    2D): un prefijo que se queda a medio nivel rellena la esfera de forma pareja, sin los
+ *    grumos y huecos que deja un subconjunto al azar.
  */
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
@@ -55,6 +58,19 @@ function cubeCell(x: number, y: number, z: number, res: number): number {
 }
 
 /**
+ * Clave de orden de una celda dentro de su nivel: código de Morton (u, v entrelazados)
+ * con los bits invertidos, y la cara en los bits bajos. Celdas consecutivas quedan lejos.
+ */
+function spreadKey(cell: number, res: number, bits: number): number {
+  const iu = cell % res, iv = Math.floor(cell / res) % res, face = Math.floor(cell / (res * res));
+  let morton = 0;
+  for (let b = 0; b < bits; b++) morton |= (((iu >> b) & 1) << (2 * b)) | (((iv >> b) & 1) << (2 * b + 1));
+  let reversed = 0;
+  for (let b = 0; b < 2 * bits; b++) reversed |= ((morton >> b) & 1) << (2 * bits - 1 - b);
+  return reversed * 6 + face;
+}
+
+/**
  * Orden estratificado de `count` puntos (vec4 en `points`): devuelve la permutación.
  * Nivel a nivel, de la rejilla más gruesa a la más fina, se elige al azar un punto
  * libre por celda vacía; lo que sobra va al final en orden aleatorio.
@@ -70,13 +86,14 @@ export function stratifiedOrder(points: Float32Array, count: number, random: () 
   const order = new Uint32Array(count);
   const taken = new Uint8Array(count);
   let n = 0;
-  for (let res = 2; 6 * res * res < count / 2; res *= 2) {
+  for (let res = 2, bits = 1; 6 * res * res < count / 2; res *= 2, bits++) {
     const occupied = new Uint8Array(6 * res * res);
     // Las celdas que ya tienen un punto de niveles anteriores cuentan como ocupadas.
     for (let k = 0; k < n; k++) {
       const p = order[k] * 4;
       occupied[cubeCell(points[p], points[p + 1], points[p + 2], res)] = 1;
     }
+    const picks: { i: number; key: number }[] = [];
     for (let k = 0; k < count; k++) {
       const i = shuffled[k];
       if (taken[i]) continue;
@@ -84,8 +101,10 @@ export function stratifiedOrder(points: Float32Array, count: number, random: () 
       if (occupied[c]) continue;
       occupied[c] = 1;
       taken[i] = 1;
-      order[n++] = i;
+      picks.push({ i, key: spreadKey(c, res, bits) });
     }
+    picks.sort((a, b) => a.key - b.key);
+    for (const p of picks) order[n++] = p.i;
   }
   for (let k = 0; k < count; k++) {
     const i = shuffled[k];

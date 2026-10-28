@@ -10,7 +10,7 @@ import { pixelAngle, softDisc } from '../particles/nodes';
 import { ParticleField, vec4Buffer } from '../particles/ParticleField';
 
 /** Radio de la esfera celeste en escena (dentro del plano lejano). */
-const SKY_RADIUS = 1e6;
+const SKY_RADIUS = 1e9;
 
 export const starLook = {
   brightness: uniform(1),

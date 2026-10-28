@@ -3,8 +3,12 @@
  */
 import GUI from 'lil-gui';
 import type * as THREE from 'three/webgpu';
+import { beltLook } from '../bodies/AsteroidBelt';
 import { atmosphereLook } from '../bodies/Atmosphere';
 import { cloudLook } from '../bodies/CloudLayer';
+import { gasLook } from '../bodies/GasGiant';
+import { orbitLook } from '../bodies/OrbitLines';
+import { ringLook } from '../bodies/Rings';
 import type { CelestialBody } from '../bodies/CelestialBody';
 import { RockyPlanet, rockyLook } from '../bodies/RockyPlanet';
 import { starLook } from '../bodies/Starfield';
@@ -49,6 +53,13 @@ export function createDebugGui({ renderer, bloom, bodies }: DebugTargets): GUI {
   dots.add(disturbanceLook.damping, 'value', 0.5, 20, 0.1).name('ratón · amortiguación');
   dots.add(disturbanceLook.disorder, 'value', 0, 2, 0.01).name('ratón · desorden');
 
+  const system = gui.addFolder('Sistema');
+  system.add(gasLook.flow, 'value', 0, 5, 0.05).name('gigantes · flujo');
+  system.add(gasLook.ballShading, 'value', 0, 1, 0.01).name('gigantes · bola');
+  system.add(ringLook.brightness, 'value', 0, 3, 0.01).name('anillos brillo');
+  system.add(beltLook.brightness, 'value', 0, 2, 0.01).name('asteroides brillo');
+  system.add(orbitLook.brightness, 'value', 0, 3, 0.01).name('órbitas brillo');
+
   const relief = gui.addFolder('Relieve');
   for (const body of bodies) {
     if (body instanceof RockyPlanet) relief.add(body.relief, 'value', 0, 0.15, 0.001).name(body.data.name);
@@ -58,6 +69,7 @@ export function createDebugGui({ renderer, bloom, bodies }: DebugTargets): GUI {
   scale.add(compressedParams, 'radiusC', 0.5, 6, 0.01).name('radio · c');
   scale.add(compressedParams, 'radiusPow', 0.3, 0.7, 0.005).name('radio · potencia');
   scale.add(compressedParams, 'linearZone', 1, 6, 0.1).name('zona lineal (radios)');
+  scale.add(compressedParams, 'power', 0.3, 0.8, 0.01).name('potencia entre sistemas');
 
   return gui;
 }

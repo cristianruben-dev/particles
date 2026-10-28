@@ -1,25 +1,31 @@
 /**
- * Base común: colocación con origen flotante, orientación, uniforms de iluminación
- * y la animación de "condensación" al aparecer.
+ * Base común: colocación con origen flotante, orientación IAU, uniforms de iluminación,
+ * niveles de detalle (vista previa y completo) con su "condensación", y el punto lejano.
+ * Ver docs/ARQUITECTURA.md §5, §6.3 y §8.
  */
 import * as THREE from 'three/webgpu';
-import { float, uniform } from 'three/tsl';
+import { cameraPosition, float, modelWorldMatrixInverse, uniform, vec3, vec4 } from 'three/tsl';
 import type { BodyData } from '../astro/bodies';
+import { spinAngle } from '../astro/ephemeris';
 import { eclToScene, vec3d } from '../astro/frames';
-import { genericRotationAngle, greenwichMeanSiderealTime } from '../astro/ephemeris';
-import { DEG } from '../astro/units';
+import { bodyFrame, cross3d } from '../astro/orientation';
+import { config } from '../config';
 import { disturbanceLook, type LocalRay } from '../particles/Disturbance';
-import { detailFraction, LodLevel, projectedRadiusPx } from '../particles/LodManager';
-import { pixelAngle } from '../particles/nodes';
-import type { ParticleField } from '../particles/ParticleField';
+import { detailFraction, projectedRadiusPx } from '../particles/LodManager';
+import { pixelAngle, softDisc } from '../particles/nodes';
 import type { FloatNode, Vec3Node } from '../particles/nodes';
 import type { CelestialBody, FrameContext } from './CelestialBody';
+import { DetailTier, type TierKind } from './DetailTier';
 
-/** Segundos que tarda un cuerpo en condensarse desde el polvo. */
+/** Segundos que tarda un cuerpo en condensarse desde el polvo al cargar. */
 const APPEAR_SECONDS = 2.2;
+/** Paso de vista previa a detalle completo: más corto, el cuerpo ya estaba ahí. */
+const UPGRADE_SECONDS = 1.4;
+/** Diámetro del punto lejano (px CSS). */
+const MARKER_PX = 3.5;
 
 export abstract class BaseBody implements CelestialBody {
-  /** Posición, escala (radio en escena) e inclinación del eje. */
+  /** Posición, escala (radio en escena) y orientación del polo. */
   readonly object3d = new THREE.Group();
   /** Hijo que gira sobre el eje del cuerpo. La superficie cuelga de aquí. */
   protected readonly spin = new THREE.Group();
@@ -27,56 +33,131 @@ export abstract class BaseBody implements CelestialBody {
   readonly positionKm = vec3d();
   readonly sceneD = vec3d();
   sceneRadius = 1;
-  /** Partículas dibujadas en el último frame. */
-  get particleCount(): number {
-    return this.lodFields.reduce((n, f) => n + f.object.count, 0);
-  }
-  abstract readonly ready: Promise<void>;
+  /** Se resuelve cuando la vista previa está en la GPU. */
+  readonly ready: Promise<void>;
+  private resolveReady!: () => void;
 
   /** Radio del cuerpo en escena (para tamaños mínimos en píxeles). */
   protected readonly objectScale = uniform(1);
   /** Dirección hacia el Sol en mundo (ejes de escena). */
   protected readonly sunDirection = uniform(new THREE.Vector3(1, 0, 0));
-  /** 0 → 1 mientras el cuerpo se condensa. */
-  protected readonly appear = uniform(0);
-  private appearing = false;
+  /** Radio en pantalla (px CSS) en el último frame. */
+  protected radiusPx = 0;
+  get screenRadiusPx(): number {
+    return this.radiusPx;
+  }
+  /** false = un solo nivel, siempre completo (el Sol). */
+  protected readonly hasFullTier: boolean = true;
 
-  protected lod = LodLevel.Globe;
-  /** Campos que se aligeran con la distancia (todos usan la misma fracción). */
-  protected readonly lodFields: ParticleField[] = [];
-  /** Partículas de la capa principal: referencia para calcular la fracción de detalle. */
-  protected detailTotal = 1;
+  private preview: DetailTier | null = null;
+  private full: DetailTier | null = null;
+  private fullLoading = false;
+  private focused = false;
+  private smallSeconds = 0;
+  private renderer: THREE.WebGPURenderer | null = null;
+
+  private readonly markerAlpha = uniform(0);
 
   constructor(readonly data: BodyData, readonly parent: CelestialBody | null) {
     this.object3d.name = data.id;
-    // Aproximación: polo inclinado hacia la longitud eclíptica 90°. Exacto para la Tierra.
-    // TODO(fase 2): orientación de polos IAU para el resto de cuerpos.
-    this.object3d.rotation.x = -data.axialTiltDeg * DEG;
     this.object3d.add(this.spin);
+    this.object3d.add(this.createMarker());
+    this.ready = new Promise((resolve) => (this.resolveReady = resolve));
   }
 
-  /** Llamar cuando las partículas estén en la GPU: arranca la condensación. */
-  protected startAppearing(): void {
-    this.appearing = true;
+  /** Construye las capas de partículas de un nivel. */
+  protected abstract buildTier(kind: TierKind): Promise<DetailTier>;
+
+  /** Llamar al final del constructor de cada subclase: hornea la vista previa. */
+  protected start(): void {
+    void this.loadTier('preview');
+  }
+
+  get particleCount(): number {
+    let n = 0;
+    for (const tier of [this.preview, this.full]) {
+      if (tier && tier.roots[0]?.object.visible) n += tier.fields.reduce((s, f) => s + f.field.object.count, 0);
+    }
+    return n;
+  }
+
+  setFocused(focused: boolean): void {
+    this.focused = focused;
+  }
+
+  private async loadTier(kind: TierKind): Promise<void> {
+    const tier = await this.buildTier(kind);
+    for (const r of tier.roots) (r.spin ? this.spin : this.object3d).add(r.object);
+    if (kind === 'preview') {
+      this.preview = tier;
+      this.resolveReady();
+    } else {
+      // Si la vista previa aún se está condensando (al arrancar), seguir desde ahí.
+      if (this.preview && this.preview.appear.value < 1) tier.appear.value = this.preview.appear.value;
+      this.full = tier;
+      this.fullLoading = false;
+    }
   }
 
   update(ctx: FrameContext): void {
+    this.renderer = ctx.renderer;
     this.object3d.scale.setScalar(this.sceneRadius);
     this.objectScale.value = this.sceneRadius;
     ctx.origin.place(this.object3d, this.sceneD);
+    this.orient(ctx.timeMs);
     this.spin.rotation.y = this.rotationAngle(ctx.timeMs);
 
     const toSun = eclToScene({ x: -this.positionKm.x, y: -this.positionKm.y, z: -this.positionKm.z });
     this.sunDirection.value.set(toSun.x, toSun.y, toSun.z).normalize();
 
-    // LOD por densidad (§6.3): solo las partículas que caben en el disco en pantalla.
-    const radiusPx = projectedRadiusPx(this.sceneRadius, this.object3d.position.length());
-    const fraction = detailFraction(this.detailTotal, radiusPx);
-    for (const field of this.lodFields) field.setVisibleFraction(fraction);
+    this.radiusPx = projectedRadiusPx(this.sceneRadius, this.object3d.position.length());
+    this.markerAlpha.value = 1 - THREE.MathUtils.smoothstep(this.radiusPx, 1.5, 4);
+    this.updateTiers(ctx);
+  }
 
-    if (this.appearing && this.appear.value < 1) {
-      this.appear.value = Math.min(1, this.appear.value + ctx.dt / APPEAR_SECONDS);
+  /** Niveles de detalle: carga y libera el completo, condensa y aplica el LOD por densidad (§6.3). */
+  private updateTiers(ctx: FrameContext): void {
+    const { preview, full } = this;
+    if (this.hasFullTier && !full && !this.fullLoading && (this.focused || this.radiusPx > config.lod.fullDetailPx)) {
+      this.fullLoading = true;
+      void this.loadTier('full');
     }
+
+    if (preview && preview.appear.value < 1) {
+      preview.appear.value = Math.min(1, preview.appear.value + ctx.dt / APPEAR_SECONDS);
+    }
+    if (full) {
+      if (full.appear.value < 1) full.appear.value = Math.min(1, full.appear.value + ctx.dt / UPGRADE_SECONDS);
+      preview?.setVisible(full.appear.value < 1);
+
+      // Lejos y sin foco durante un rato: se libera el detalle completo.
+      const small = !this.focused && this.radiusPx < config.lod.releasePx;
+      this.smallSeconds = small ? this.smallSeconds + ctx.dt : 0;
+      if (this.smallSeconds > config.lod.releaseSeconds) this.releaseFull();
+    }
+
+    for (const tier of [this.preview, this.full]) {
+      if (!tier || !tier.roots[0]?.object.visible) continue;
+      const fraction = detailFraction(tier.total, this.radiusPx);
+      for (const { field, scale } of tier.fields) field.setVisibleFraction(Math.min(1, fraction * scale));
+      for (const u of tier.updates) u(ctx);
+    }
+  }
+
+  private releaseFull(): void {
+    if (!this.full || !this.renderer) return;
+    this.full.dispose(this.renderer);
+    this.full = null;
+    this.smallSeconds = 0;
+    this.preview?.setVisible(true);
+  }
+
+  /** Polo y nodo IAU de la fecha → orientación del cuerpo en ejes de escena. */
+  private orient(timeMs: number): void {
+    const f = bodyFrame(this.data.pole, timeMs);
+    const x = eclToScene(f.node), y = eclToScene(f.pole), z = cross3d(x, y);
+    basis.set(x.x, y.x, z.x, 0, x.y, y.y, z.y, 0, x.z, y.z, z.z, 0, 0, 0, 0, 1);
+    this.object3d.quaternion.setFromRotationMatrix(basis);
   }
 
   /**
@@ -105,32 +186,50 @@ export abstract class BaseBody implements CelestialBody {
     };
   }
 
-  /** Ángulo de giro propio (rad) alrededor del eje local y. */
+  /** Ángulo de giro propio (rad) alrededor del eje local y, desde el nodo Q. */
   protected rotationAngle(timeMs: number): number {
-    if (this.data.id === 'earth') return greenwichMeanSiderealTime(timeMs);
-    if (this.data.tidallyLocked && this.parent) {
-      // lon 0° hacia el padre: dirección al padre en el marco inclinado del cuerpo.
+    if (this.data.id === 'moon' && this.parent) {
+      // La Luna: lon 0° hacia la Tierra (su W de la IAU necesita términos de libración).
       const p = this.parent.sceneD;
       const toParent = new THREE.Vector3(p.x - this.sceneD.x, p.y - this.sceneD.y, p.z - this.sceneD.z)
         .applyQuaternion(this.object3d.quaternion.clone().invert());
       return Math.atan2(-toParent.z, toParent.x);
     }
-    return genericRotationAngle(this.data, timeMs);
+    return spinAngle(this.data, timeMs);
   }
 
   /**
    * Posición durante la condensación: cada partícula llega desde fuera, con un
    * retraso propio según su valor aleatorio `rand`.
    */
-  protected condense(position: Vec3Node, rand: FloatNode): Vec3Node {
-    const t = this.appear.mul(1.6).sub(rand.mul(0.6)).clamp(0, 1);
+  protected condense(position: Vec3Node, rand: FloatNode, appear: FloatNode): Vec3Node {
+    const t = appear.mul(1.6).sub(rand.mul(0.6)).clamp(0, 1);
     const scatter = float(1).sub(t).pow(2).mul(rand.mul(1.5).add(0.4));
     return position.mul(scatter.add(1));
   }
 
-  setLod(level: LodLevel): void {
-    this.lod = level;
+  /** Punto brillante con el color del cuerpo cuando mide menos de unos píxeles (escala real). */
+  private createMarker(): THREE.Sprite {
+    const material = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    material.sizeAttenuation = false;
+    // En la cara del cuerpo que mira a la cámara: no lo tapan sus propias partículas.
+    const toCamera = modelWorldMatrixInverse.mul(vec4(cameraPosition, 1)).xyz.normalize();
+    material.positionNode = toCamera.mul(1.05);
+    material.scaleNode = pixelAngle.mul(MARKER_PX).div(this.objectScale);
+    const c = new THREE.Color(this.data.color);
+    const gain = this.data.kind === 'star' ? 8 : 1.6;
+    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(gain).mul(this.markerAlpha), 1);
+    material.opacityNode = softDisc();
+    const marker = new THREE.Sprite(material);
+    marker.frustumCulled = false;
+    return marker;
   }
 
-  abstract dispose(): void;
+  dispose(): void {
+    if (!this.renderer) return;
+    this.preview?.dispose(this.renderer);
+    this.full?.dispose(this.renderer);
+  }
 }
+
+const basis = new THREE.Matrix4();

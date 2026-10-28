@@ -5,7 +5,6 @@ import type { Object3D, Vector3, WebGPURenderer } from 'three/webgpu';
 import type { BodyData } from '../astro/bodies';
 import type { Vec3d } from '../astro/frames';
 import type { FloatingOrigin } from '../core/FloatingOrigin';
-import type { LodLevel } from '../particles/LodManager';
 import type { ScaleSystem } from '../scale/ScaleSystem';
 
 export interface FrameContext {
@@ -13,6 +12,8 @@ export interface FrameContext {
   timeMs: number;
   /** Segundos reales desde el frame anterior. */
   dt: number;
+  /** Segundos simulados por segundo real (0 en pausa). */
+  timeRate: number;
   scale: ScaleSystem;
   origin: FloatingOrigin;
   /** Para lanzar pasadas compute por frame. */
@@ -35,13 +36,16 @@ export interface CelestialBody {
   readonly sceneD: Vec3d;
   /** Radio en unidades de escena. */
   sceneRadius: number;
+  /** Radio en pantalla (px CSS) en el último frame. */
+  readonly screenRadiusPx: number;
 
   /** Partículas activas (para el HUD y el presupuesto). */
   readonly particleCount: number;
-  /** Se resuelve cuando las partículas están horneadas y subidas. */
+  /** Se resuelve cuando la vista previa está horneada y subida. */
   readonly ready: Promise<void>;
 
   update(ctx: FrameContext): void;
-  setLod(level: LodLevel): void;
+  /** El cuerpo enfocado carga su detalle completo aunque aún se vea pequeño (§6.3). */
+  setFocused(focused: boolean): void;
   dispose(): void;
 }

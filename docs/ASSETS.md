@@ -61,3 +61,27 @@ Descargados el 27/10/2026 y redimensionados con `sips` (macOS). Todo es dominio 
 | `data/stars.bin` | https://cdsarc.cds.unistra.fr/ftp/V/50/catalog.gz | Yale Bright Star Catalog, 5ª ed. (Hoffleit & Warren), vía CDS VizieR V/50 | `node scripts/build-stars.mjs <catalog>` → 9.096 estrellas, 4 float32 (RA, Dec, Vmag, B-V) |
 
 El catálogo original no se guarda en el repo: para regenerar `stars.bin`, descarga y descomprime `catalog.gz` y pasa su ruta al script.
+
+### Fase 2 (27/10/2026)
+
+Dominio público (NASA, JPL, USGS, JHUAPL/SwRI). Las URL de `asc-pds-services.s3…` son el almacén de [planetarymaps.usgs.gov](https://planetarymaps.usgs.gov/mosaic/) (USGS Astrogeology). Antes de usar un mapa nuevo se comprueba con accidentes conocidos que el este y la longitud 0° quedan donde deben; si el borde izquierdo no está en −180°, se indica con `mapLeftLon` en `bodies/presets.ts`.
+
+| Archivo en `public/` | Origen | Crédito / licencia | Proceso |
+|---|---|---|---|
+| `textures/mercury/albedo_4k.jpg` | https://upload.wikimedia.org/wikipedia/commons/f/f2/Mercury_global_map_2013-05-14_bright.png | NASA / JHUAPL / Carnegie (MESSENGER MDIS). Dominio público | 6132×3066 → 4096×2048 |
+| `textures/mercury/height_2k.png` | https://upload.wikimedia.org/wikipedia/commons/d/d9/Mercury_Messenger_DEM_Global_665m_v2_max.png | USGS Astrogeology, DEM global de MESSENGER (665 m, v2). Dominio público. ~0,5 = radio medio | 23040×11520 → 2048×1024, gris 8 bits |
+| `textures/mars/albedo_4k.jpg` | https://upload.wikimedia.org/wikipedia/commons/1/1f/Mars_Viking_MDIM21_ClrMosaic_1km.jpg | NASA / JPL / USGS, Viking MDIM 2.1 en color. Dominio público | 21339×10670 → 4096×2048 |
+| `textures/mars/height_3k.png` | https://pds-geosciences.wustl.edu/mgs/mgs-m-mola-5-megdr-l3-v1/mgsl_300x/meg016/megt90n000eb.img | NASA PDS, MGS MOLA MEGDR (16 px/grado). Dominio público | `scripts/build-mars-height.py`: 2880×1440, −8200 m → 0 y 21200 m → 255 (0 m = 0,279), media vuelta para empezar en −180° |
+| `textures/jupiter/albedo_4k.jpg` | https://upload.wikimedia.org/wikipedia/commons/1/1e/Jupiter_Cylindrical_Map_-_Dec_2000_PIA07782.jpg | NASA / JPL / Space Science Institute, Cassini (PIA07782). Dominio público. Gran Mancha Roja en lon −50°, lat −19,5° del mapa | 3601×1801 → 3600×1800 |
+| `textures/io/albedo_2k.jpg` | https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Io_GalileoSSI-Voyager_Global_Mosaic_ClrMerge_1km.tif | USGS Astrogeology, Galileo SSI + Voyager en color. Dominio público | 11445×5723 → 2048×1024 |
+| `textures/europa/albedo_1k.jpg` | https://upload.wikimedia.org/wikipedia/commons/2/26/Europa_Voyager_GalileoSSI_global_mosaic.jpg | USGS / PDS (T. Becker), Voyager + Galileo SSI. Dominio público | 1024×512 sin cambios; se tiñe en el preset |
+| `textures/ganymede/albedo_2k.jpg` | https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Ganymede_Voyager_GalileoSSI_Global_ClrMosaic_1435m.tif | USGS Astrogeology, Voyager + Galileo SSI en color. Dominio público. Borde izquierdo en 0° E | 11520×5760 → 2048×1024 |
+| `textures/callisto/albedo_2k.jpg` | https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Callisto_Voyager_GalileoSSI_global_mosaic_1km.tif | USGS Astrogeology, Voyager + Galileo SSI. Dominio público. Borde izquierdo en 0° E | 15138×7569 → 2048×1024; se tiñe en el preset |
+| `textures/titan/albedo_2k.jpg` | https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Titan_ISS_P19658_Mosaic_Global_4km.tif | USGS / NASA, Cassini ISS a 938 nm. Dominio público. Borde izquierdo en 0° E | 4040×2020 → 2048×1024; bajo una bruma naranja |
+| `textures/triton/albedo_2k.jpg` | https://upload.wikimedia.org/wikipedia/commons/6/61/Triton_map_no_grid.jpg | NASA / JPL / USGS, Voyager 2. Dominio público | 14138×7069 → 2048×1024 |
+| `textures/pluto/albedo_2k.jpg` | https://upload.wikimedia.org/wikipedia/commons/a/ad/Pluto_color_mapmosaic.jpg | NASA / JHUAPL / SwRI, New Horizons. Dominio público. Borde izquierdo en 0° E | 5926×2963 → 2048×1024 |
+| `textures/charon/albedo_2k.jpg` | https://asc-pds-services.s3.us-west-2.amazonaws.com/mosaic/Charon_NewHorizons_Global_Mosaic_300m_Jul2017_8bit.tif | NASA / JHUAPL / SwRI / LPI vía USGS, New Horizons. Dominio público | 12693×6347 → 2048×1024 |
+
+Sin archivo: Venus (cimas de nubes con ruido fractal, la superficie de Magellan no es visible), Saturno, Urano y Neptuno (perfil de bandas procedural) y los anillos (bordes publicados de los anillos C, B, A, F y del de Urano, en `bodies/presets.ts`).
+
+Datos de referencia (no se guardan): polos y meridianos de la IAU desde el kernel de NAIF `pck00011.tpc` (https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc), elementos medios de las lunas de https://ssd.jpl.nasa.gov/sats/elem/ y posiciones de verificación de la API de JPL Horizons.

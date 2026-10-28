@@ -20,8 +20,18 @@ Abre la URL que muestra Vite. Añade `?debug` para ver el panel de debug.
 | `npm run typecheck` | Solo la comprobación de tipos |
 | `npm run preview` | Sirve el build de producción |
 | `node scripts/build-stars.mjs <catalog>` | Regenera `public/data/stars.bin` desde el Yale Bright Star Catalog |
+| `python3 -I scripts/build-mars-height.py <img> <png>` | Convierte el MOLA de Marte en el mapa de altura |
 
-**Controles:** arrastrar para girar, rueda para zoom, clic o teclas 1–3 para enfocar Sol, Tierra o Luna; `,` y `.` cambian la velocidad del tiempo, espacio pausa y `N` vuelve a la hora actual.
+**Controles:**
+
+| Acción | Cómo |
+|---|---|
+| Girar / acercarse | Arrastrar / rueda |
+| Viajar a un cuerpo | Clic sobre él, en su nombre o en los botones de arriba (las lunas aparecen al elegir su planeta) |
+| Sol y planetas | Teclas `0`–`9` (0 Sol, 1 Mercurio… 9 Plutón) |
+| Velocidad del tiempo | `,` y `.` (de tiempo real a 1 año/s); espacio pausa; `N` vuelve a ahora; el campo de fecha salta a cualquier día |
+| Escala comprimida ↔ real | `E` o el botón de escala |
+| Órbitas / nombres | `O` / `L` |
 
 ## Documentación
 
@@ -38,17 +48,18 @@ src/
 ├── config.ts         Presupuestos y flags
 ├── core/             Engine (bucle), Renderer, SimClock, FloatingOrigin
 ├── scale/            ScaleSystem: km → escena (comprimida / real)
-├── astro/            Datos de cuerpos, unidades, órbitas keplerianas
-├── particles/        ParticleField (GPU), horneado en worker, orden progresivo, LOD
-├── bodies/           Sun, RockyPlanet, GasGiant, Atmosphere, CloudLayer, Rings, AsteroidBelt, Starfield
+├── astro/            Datos de cuerpos, órbitas keplerianas, lunas, orientación IAU
+├── particles/        ParticleField (GPU), horneado en worker, orden progresivo, LOD, perturbación
+├── bodies/           Sun, RockyPlanet, GasGiant, Rings, Atmosphere, CloudLayer, AsteroidBelt,
+│                     OrbitLines, Starfield y los niveles de detalle (DetailTier)
 ├── surface/          Quadtree cubo-esfera, chunks y pool para el aterrizaje
-├── navigation/       CameraRig + modos Orbit / FreeFly / Travel
+├── navigation/       CameraRig + OrbitMode (órbita y viaje entre cuerpos), FreeFly (fase 4)
 ├── postfx/           Bloom y efectos
-└── ui/               HUD y panel de debug
+└── ui/               HUD, etiquetas y panel de debug
 public/
 ├── textures/         Texturas por cuerpo (ver docs/ASSETS.md)
 └── data/             Catálogos (estrellas)
-scripts/              Conversión de datos (catálogo de estrellas)
+scripts/              Conversión de datos (estrellas, altura de Marte)
 ```
 
 Los `TODO(fase N)` del código indican en qué fase de [docs/PLAN.md](docs/PLAN.md) se implementa cada pieza.

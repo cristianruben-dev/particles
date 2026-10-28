@@ -25,7 +25,9 @@ function loadImage(url: string): Promise<Image> {
   let cached = imageCache.get(url);
   if (!cached) {
     cached = (async () => {
-      const blob = await (await fetch(url)).blob();
+      const response = await fetch(url);
+    if (!response.ok || !response.headers.get('content-type')?.startsWith('image/')) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
       // Sin gestión de color: los heightmaps deben llegar con sus valores crudos.
       const bitmap = await createImageBitmap(blob, { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
       const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
@@ -63,11 +65,13 @@ function directionToUV(x: number, y: number, z: number): [number, number] {
 
 /** Muestreo bilineal (u con wrap, v con clamp). Escribe `channels` valores en `out[offset…]`. */
 function sample(img: Image, u: number, v: number, tex: BakeTexture, out: Float32Array, offset: number): void {
+  // Mapas cuyo borde izquierdo no está en −180°: se desplaza u (con wrap más abajo).
+  if (tex.leftLon !== undefined) u += (-180 - tex.leftLon) / 360;
   const fx = u * img.width - 0.5;
   const fy = Math.min(Math.max(v * img.height - 0.5, 0), img.height - 1);
   const x0 = Math.floor(fx), y0 = Math.floor(fy);
   const tx = fx - x0, ty = fy - y0;
-  const xa = ((x0 % img.width) + img.width) % img.width;
+  const xa = ((x0 % img.width) + img.width * 2) % img.width;
   const xb = (xa + 1) % img.width;
   const ya = y0, yb = Math.min(y0 + 1, img.height - 1);
   const ia = (ya * img.width + xa) * 4, ib = (ya * img.width + xb) * 4;
@@ -90,8 +94,15 @@ async function bake(req: BakeRequest): Promise<BakeResult> {
   const { count } = req;
   const random = rng(req.seed);
   const images = new Map<string, Image>();
+  // Una textura que falta no tumba el cuerpo: se avisa y el cuerpo sale con su color base.
   await Promise.all(
-    Object.entries(req.textures).map(async ([key, tex]) => images.set(key, await loadImage(tex.url))),
+    Object.entries(req.textures).map(async ([key, tex]) => {
+      try {
+        images.set(key, await loadImage(tex.url));
+      } catch (error) {
+        console.warn(`Textura no disponible: ${tex.url}`, error);
+      }
+    }),
   );
 
   // Dirección xyz + valor aleatorio estable por partícula en w.
@@ -114,7 +125,8 @@ async function bake(req: BakeRequest): Promise<BakeResult> {
     }
   } else {
     // Muestreo por rechazo: más partículas donde la textura de densidad es más brillante.
-    const img = images.get(dist.texture)!;
+    const img = images.get(dist.texture);
+    if (!img) throw new Error(`Falta la textura de densidad ${dist.texture}`);
     const tmp = new Float32Array(4);
     const densityTex: BakeTexture = { url: '', channels: 1, srgb: false };
     let i = 0;
@@ -134,7 +146,8 @@ async function bake(req: BakeRequest): Promise<BakeResult> {
 
   const samples: Record<string, Float32Array> = {};
   for (const [key, tex] of Object.entries(req.textures)) {
-    const img = images.get(key)!;
+    const img = images.get(key);
+    if (!img) continue;
     const out = new Float32Array(count * tex.channels);
     for (let i = 0; i < count; i++) {
       const [u, v] = directionToUV(directions[i * 4], directions[i * 4 + 1], directions[i * 4 + 2]);
@@ -143,7 +156,50 @@ async function bake(req: BakeRequest): Promise<BakeResult> {
     samples[key] = out;
   }
 
+  if (req.noise) {
+    const { scale, stretch, octaves } = req.noise;
+    const out = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+      const x = directions[i * 4], y = directions[i * 4 + 1], z = directions[i * 4 + 2];
+      out[i] = fbm(x * scale, y * scale * stretch, z * scale, octaves, req.seed);
+    }
+    samples.noise = out;
+  }
+
   return { id: req.id, directions, samples };
+}
+
+/** Hash entero de una celda 3D → [0, 1). */
+function hash3(x: number, y: number, z: number, seed: number): number {
+  let h = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(z, 2147483647) ^ Math.imul(seed, 1274126177);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/** Ruido de valor 3D con interpolación suave (0–1). */
+function valueNoise(x: number, y: number, z: number, seed: number): number {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  const fx = x - xi, fy = y - yi, fz = z - zi;
+  const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy), w = fz * fz * (3 - 2 * fz);
+  const c = (dx: number, dy: number, dz: number) => hash3(xi + dx, yi + dy, zi + dz, seed);
+  const x00 = c(0, 0, 0) + (c(1, 0, 0) - c(0, 0, 0)) * u;
+  const x10 = c(0, 1, 0) + (c(1, 1, 0) - c(0, 1, 0)) * u;
+  const x01 = c(0, 0, 1) + (c(1, 0, 1) - c(0, 0, 1)) * u;
+  const x11 = c(0, 1, 1) + (c(1, 1, 1) - c(0, 1, 1)) * u;
+  const y0 = x00 + (x10 - x00) * v, y1 = x01 + (x11 - x01) * v;
+  return y0 + (y1 - y0) * w;
+}
+
+/** Suma de octavas (fBm), normalizada a 0–1. */
+function fbm(x: number, y: number, z: number, octaves: number, seed: number): number {
+  let sum = 0, amp = 0.5, norm = 0;
+  for (let o = 0; o < octaves; o++) {
+    sum += valueNoise(x, y, z, seed + o) * amp;
+    norm += amp;
+    x *= 2.03; y *= 2.03; z *= 2.03;
+    amp *= 0.5;
+  }
+  return sum / norm;
 }
 
 self.addEventListener('message', async (event: MessageEvent<BakeRequest>) => {

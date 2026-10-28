@@ -9,7 +9,7 @@ import type { ScaleSystem } from '../scale/ScaleSystem';
 /**
  * `bodies` debe venir ordenado con cada padre antes que sus hijos.
  * Cada hijo se coloca en la dirección real respecto a su padre, a la distancia
- * `scale.localDistance(radioPadre, d)`.
+ * `scale.localDistance(padre, d)`.
  */
 export function layoutSystem(bodies: readonly CelestialBody[], timeMs: number, scale: ScaleSystem): void {
   for (const body of bodies) {
@@ -27,7 +27,7 @@ export function layoutSystem(bodies: readonly CelestialBody[], timeMs: number, s
     body.positionKm.z = parent.positionKm.z + rel.z;
 
     const d = length3d(rel);
-    const k = scale.localDistance(parent.data.radiusKm, d) / d;
+    const k = scale.localDistance(parent.data, d) / d;
     const dir = eclToScene(rel);
     body.sceneD.x = parent.sceneD.x + dir.x * k;
     body.sceneD.y = parent.sceneD.y + dir.y * k;

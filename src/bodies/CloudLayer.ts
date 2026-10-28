@@ -7,8 +7,9 @@ import { daysSinceJ2000 } from '../astro/units';
 import { bakeSphere } from '../particles/bake';
 import { Disturbance } from '../particles/Disturbance';
 import { ball, ballSprite, frontFacing, worldNormal, type FloatNode, type Vec3Node } from '../particles/nodes';
-import { ParticleField, vec4Buffer } from '../particles/ParticleField';
+import { ParticleField } from '../particles/ParticleField';
 import type { FrameContext } from './CelestialBody';
+import type { DetailTier } from './DetailTier';
 import type { RockyPreset } from './presets';
 
 type CloudPreset = NonNullable<RockyPreset['clouds']>;
@@ -26,35 +27,48 @@ export class CloudLayer {
 
   private constructor(
     readonly field: ParticleField,
-    readonly disturbance: Disturbance,
+    /** Solo en el detalle completo. */
+    readonly disturbance: Disturbance | null,
   ) {
     this.group.add(field.object);
   }
 
-  static async create(preset: CloudPreset, sunDirection: Vec3Node, objectScale: FloatNode, appear: FloatNode): Promise<CloudLayer> {
+  static async create(
+    tier: DetailTier,
+    preset: CloudPreset,
+    count: number,
+    sunDirection: Vec3Node,
+    objectScale: FloatNode,
+  ): Promise<CloudLayer> {
     const baked = await bakeSphere({
-      count: preset.count,
+      count,
       seed: 7,
       distribution: { kind: 'density', texture: 'clouds', gamma: 1.2, threshold: 0.18 },
       textures: { clouds: { url: preset.texture, channels: 1, srgb: false } },
     });
 
-    const density = new Float32Array(preset.count * 4);
-    for (let i = 0; i < preset.count; i++) density[i * 4] = baked.samples.clouds[i];
+    const density = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) density[i * 4] = baked.samples.clouds[i];
 
-    const dirBuffer = vec4Buffer(baked.directions);
+    const dirBuffer = tier.buffer(baked.directions);
     const dirAttr = dirBuffer.toAttribute();
-    const densityAttr = vec4Buffer(density).toAttribute();
+    const densityAttr = tier.buffer(density).toAttribute();
     const dir = dirAttr.xyz;
 
-    // Algo de grosor vertical. TODO(fase 2): turbulencia con curl noise en compute.
+    // Algo de grosor vertical. TODO: turbulencia con curl noise en compute.
     const restOf = (d: THREE.Node<'vec4'>) => d.xyz.mul(float(1 + preset.altitude).add(d.w.mul(0.006)));
-    const disturbance = new Disturbance(preset.count, (i) => restOf(dirBuffer.element(i)));
-    const layer = new CloudLayer(new ParticleField(preset.count, 'translucent', 0.6), disturbance);
+    let disturbance: Disturbance | null = null;
+    if (tier.kind === 'full') {
+      disturbance = new Disturbance(count, (i) => restOf(dirBuffer.element(i)));
+      tier.track(disturbance.resources.buffers, disturbance.resources.computes);
+    }
+    const layer = new CloudLayer(new ParticleField(count, 'translucent', 0.6), disturbance);
     const material = layer.field.material;
 
     // Al aparecer, las nubes bajan desde más arriba.
-    const center = restOf(dirAttr).mul(float(1).add(float(1).sub(appear).mul(0.25))).add(disturbance.offsetNode());
+    const appear = tier.appear;
+    let center = restOf(dirAttr).mul(float(1).add(float(1).sub(appear).mul(0.25)));
+    if (disturbance) center = center.add(disturbance.offsetNode());
 
     const { scale, visibility } = ballSprite({
       center,
@@ -85,9 +99,5 @@ export class CloudLayer {
   update(ctx: FrameContext): void {
     const days = daysSinceJ2000(ctx.timeMs);
     this.group.rotation.y = ((days * DRIFT_TURNS_PER_DAY) % 1) * Math.PI * 2;
-  }
-
-  dispose(): void {
-    this.field.dispose();
   }
 }

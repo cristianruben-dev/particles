@@ -2,7 +2,7 @@
 
 Cuatro fases. Cada una termina en algo que se puede abrir en el navegador y disfrutar. Cada fase tiene un **criterio de "hecho"** comprobable: no se pasa a la siguiente hasta cumplirlo.
 
-Estado: **Fase 1 implementada; pendiente de verificar los 60 fps** (criterio de "hecho"). Después: Fase 2.
+Estado: **Fase 2 implementada.** Quedan por comprobar con la ventana delante los 60 fps (fases 1 y 2) y que nada tiemble en escala real. Después: Fase 3.
 
 ---
 
@@ -48,29 +48,36 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 
 **Pendientes detectados en la fase 1 (para fases siguientes):**
 - Anillos concéntricos en el halo de bloom del Sol.
-- Las nubes se ven algo "granuladas" de cerca; turbulencia con *curl noise* en compute (fase 2).
+- Las nubes se ven algo "granuladas" de cerca; turbulencia con *curl noise* en compute.
 - Respaldo WebGL2 sin probar.
 - Errores de WebGPU de "textura de tamaño 0" si la página carga con la ventana oculta (inofensivos; desaparecen al mostrarse).
 
 ---
 
-## Fase 2 — Sistema solar completo
+## Fase 2 — Sistema solar completo ✅ (pendiente de medir)
 
-1. Los 8 planetas + Plutón y lunas principales (Luna, Ío, Europa, Ganímedes, Calisto, Titán, Tritón).
-2. `GasGiant` (Júpiter, Saturno, Urano, Neptuno) con bandas animadas y vórtices.
-3. `Rings` de Saturno con velocidad kepleriana y sombra; anillos tenues de Urano.
-4. `AsteroidBelt` con huecos de Kirkwood; cinturón de Kuiper ligero.
-5. Líneas de órbita (también hechas de partículas).
-6. `LodManager` con niveles discretos, presupuesto global y transición de "condensación" (el LOD continuo por densidad ya existe).
-7. **Escala real** en la UI + transición animada entre escalas (`ScaleSystem` ya la soporta).
-8. Control del tiempo en la UI (pausa, ×1, ×1000, 1 día/s, 1 año/s, fecha concreta).
-9. `TravelMode`: clic → viaje cinematográfico.
+0. [x] **Escala comprimida rehecha antes de añadir cuerpos** (§4.3): perfil de tres tramos (lineal, logarítmico dentro de cada sistema de lunas, potencia entre sistemas). Con el perfil anterior la Luna se salía del hueco hasta Venus y Calisto del de Saturno. El primer plano de la Tierra y la Luna no cambia.
+1. [x] Los 8 planetas + Plutón y lunas principales (Luna, Ío, Europa, Ganímedes, Calisto, Titán, Tritón) y Caronte, con mapas reales de NASA/USGS (`docs/ASSETS.md`) y orientación IAU (polo y meridiano) para todos.
+2. [x] `GasGiant` (Júpiter, Saturno, Urano, Neptuno) con bandas rígidas que fluyen, vórtices (Gran Mancha Roja y Gran Mancha Oscura) y achatamiento.
+3. [x] `Rings` de Saturno con velocidad kepleriana, sombra del planeta sobre ellos y de ellos sobre el planeta; anillos finos de Urano.
+4. [x] `AsteroidBelt` con huecos de Kirkwood, troyanos de Júpiter y cinturón de Kuiper ligero, propagados con Kepler en GPU.
+5. [x] Líneas de órbita hechas de partículas, con estela detrás de cada cuerpo.
+6. [x] Niveles de detalle: punto lejano, vista previa siempre en memoria y detalle completo bajo demanda con condensación al llegar; el completo se libera de la GPU al alejarse (§6.3). Pendiente: presupuesto global (hoy no hace falta).
+7. [x] **Escala real** en la UI (botón y tecla `E`) con transición animada; etiquetas con el nombre de lo que mide menos de 30 px.
+8. [x] Control del tiempo en la UI: pausa, de tiempo real a 1 año/s y campo de fecha.
+9. [x] Viaje cinematográfico al elegir un cuerpo (en `OrbitMode.focusOn`, no en un modo aparte): sube sobre el plano a mitad de camino y llega por el lado de día.
 
 **Hecho cuando:**
-- Se puede viajar a cualquier planeta desde la lista o con clic.
-- El cambio de escala comprimida ↔ real es fluido y sin saltos.
-- Ningún planeta "tiembla" a ninguna distancia (origen flotante verificado).
-- Las posiciones coinciden con las efemérides de JPL Horizons para una fecha de prueba (error < 1°).
+- [x] Se puede viajar a cualquier planeta desde la lista o con clic (botones, teclas 0–9, clic en el cuerpo o en su nombre).
+- [x] El cambio de escala comprimida ↔ real es fluido y sin saltos (comprobado con capturas durante la transición).
+- [ ] Ningún planeta "tiembla" a ninguna distancia: el origen flotante lo garantiza por diseño, pero falta mirarlo en escala real cerca de Neptuno y Plutón con la ventana delante. Las líneas de órbita (puntos en float32 relativos al Sol) se apagan cerca de cada cuerpo por si acaso.
+- [x] Las posiciones coinciden con JPL Horizons (27/10/2026, vectores eclípticos J2000): planetas y Plutón < 0,08°; Luna 0,19°; galileanas ~0,1°; Caronte 0,15°; Titán < 0,4°; Tritón < 7° (luna, fuera del criterio).
+- [ ] 60 fps: pendiente de medir con la ventana delante, como en la fase 1. En el panel del navegador, sin estar delante, se vieron 60–100 fps en las vistas normales.
+
+**Pendientes detectados en la fase 2:**
+- Los gigantes gaseosos, de cerca, siguen viéndose algo "granulados" (puntos claros sobre negro); el borde entre bandas se remueve con el flujo, a propósito.
+- Tritón tiene un error de unos 6° en su órbita: el modelo de elementos medios no recoge bien la precesión de su plano.
+- Saturno no tiene textura real (no hay un mapa global de Cassini sin anillos); su color es un perfil de bandas.
 
 ---
 

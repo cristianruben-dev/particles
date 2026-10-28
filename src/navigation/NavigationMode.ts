@@ -5,7 +5,7 @@
 import type { CameraRig } from './CameraRig';
 
 export interface NavigationMode {
-  readonly name: 'orbit' | 'freefly' | 'travel';
+  readonly name: 'orbit' | 'freefly';
   enter(rig: CameraRig): void;
   update(rig: CameraRig, dt: number): void;
   exit(rig: CameraRig): void;

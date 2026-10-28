@@ -10,7 +10,6 @@ import {
   float,
   fract,
   instanceIndex,
-  instancedArray,
   max,
   mix,
   mx_fractal_noise_float,
@@ -35,9 +34,9 @@ import {
   viewDirection,
   worldNormal,
 } from '../particles/nodes';
-import { ParticleField, vec4Buffer } from '../particles/ParticleField';
+import { ParticleField } from '../particles/ParticleField';
 import { BaseBody } from './BaseBody';
-import type { FrameContext } from './CelestialBody';
+import { DetailTier, type TierKind } from './DetailTier';
 
 export const sunLook = {
   brightness: uniform(1.9),
@@ -48,44 +47,42 @@ const SURFACE_COUNT = 320_000;
 const CORONA_COUNT = 70_000;
 
 export class Sun extends BaseBody {
-  readonly ready: Promise<void>;
-  private readonly fields: ParticleField[] = [];
+  /** El Sol siempre se ve grande: un solo nivel, completo. */
+  protected readonly hasFullTier = false;
   /** Segundos de animación (reales, reducidos en float64). */
   private readonly animTime = uniform(0);
-  private granulation: THREE.ComputeNode | null = null;
-  private disturbance: Disturbance | null = null;
 
   constructor(data: BodyData) {
     super(data, null);
-    this.ready = this.build();
+    this.start();
   }
 
-  private async build(): Promise<void> {
+  protected async buildTier(kind: TierKind): Promise<DetailTier> {
+    const tier = new DetailTier(kind);
     const [surface, corona] = await Promise.all([
       bakeSphere({ count: SURFACE_COUNT, seed: 1, distribution: { kind: 'progressive' }, textures: {} }),
       bakeSphere({ count: CORONA_COUNT, seed: 2, distribution: { kind: 'progressive' }, textures: {} }),
     ]);
-    this.fields.push(this.createSurface(surface.directions), this.createCorona(corona.directions));
-    this.spin.add(this.fields[0].object);
-    this.object3d.add(this.fields[1].object);
-    this.detailTotal = SURFACE_COUNT;
-    this.lodFields.push(...this.fields);
-    this.startAppearing();
+    tier.addField(this.createSurface(tier, surface.directions), true);
+    tier.addField(this.createCorona(tier, corona.directions), false);
+    tier.total = SURFACE_COUNT;
+    return tier;
   }
 
-  private createSurface(directions: Float32Array): ParticleField {
-    const dirBuffer = vec4Buffer(directions);
+  private createSurface(tier: DetailTier, directions: Float32Array): ParticleField {
+    const dirBuffer = tier.buffer(directions);
     // (granulación, actividad, 0, 0) por partícula, escrito por la pasada compute.
-    const stateBuffer = instancedArray(SURFACE_COUNT, 'vec4');
+    const stateBuffer = tier.buffer(SURFACE_COUNT);
     const t = this.animTime;
 
-    this.granulation = Fn(() => {
+    const granulation = Fn(() => {
       const d = dirBuffer.element(instanceIndex).xyz;
       // Celdas de Worley que hierven; regiones activas a gran escala.
       const granules = mx_worley_noise_float(d.mul(48).add(vec3(t.mul(0.04), t.mul(0.03), 0)));
       const active = mx_fractal_noise_float(d.mul(2.2).add(vec3(0, t.mul(0.01), 0)), 4);
       stateBuffer.element(instanceIndex).assign(vec4(granules, active, 0, 0));
     })().compute(SURFACE_COUNT);
+    tier.track([], [granulation]);
 
     const dirAttr = dirBuffer.toAttribute();
     const state = stateBuffer.toAttribute();
@@ -96,10 +93,16 @@ export class Sun extends BaseBody {
     // Posición de reposo: misma expresión en el material y en la perturbación del cursor.
     const restOf = (d: THREE.Node<'vec4'>, st: THREE.Node<'vec4'>) =>
       d.xyz.mul(float(1).add(st.x.sub(0.5).mul(-0.004).add(st.y.mul(0.005))));
-    this.disturbance = new Disturbance(SURFACE_COUNT, (i) => restOf(dirBuffer.element(i), stateBuffer.element(i)));
-    const center = this.condense(restOf(dirAttr, state), dirAttr.w).add(this.disturbance.offsetNode());
+    const disturbance = new Disturbance(SURFACE_COUNT, (i) => restOf(dirBuffer.element(i), stateBuffer.element(i)));
+    tier.track(disturbance.resources.buffers, disturbance.resources.computes);
+    const center = this.condense(restOf(dirAttr, state), dirAttr.w, tier.appear).add(disturbance.offsetNode());
 
     const field = new ParticleField(SURFACE_COUNT, 'solid', 0.75);
+    tier.updates.push((ctx) => {
+      this.animTime.value = (performance.now() / 1000) % 10_000;
+      ctx.renderer.compute(granulation);
+      disturbance.update(ctx.renderer, this.localPointerRay(ctx, field.object), ctx.dt, ctx.nowSeconds);
+    });
     const material = field.material;
     const { scale, visibility } = ballSprite({
       center,
@@ -126,8 +129,8 @@ export class Sun extends BaseBody {
     return field;
   }
 
-  private createCorona(directions: Float32Array): ParticleField {
-    const dirAttr = vec4Buffer(directions).toAttribute();
+  private createCorona(tier: DetailTier, directions: Float32Array): ParticleField {
+    const dirAttr = tier.buffer(directions).toAttribute();
     const rand = dirAttr.w;
     const t = this.animTime;
 
@@ -147,25 +150,12 @@ export class Sun extends BaseBody {
       minPixels: 2,
       objectScale: this.objectScale,
     });
-    const intensity = float(1).sub(f).pow(2.5).mul(sunLook.corona).mul(this.appear);
+    const intensity = float(1).sub(f).pow(2.5).mul(sunLook.corona).mul(tier.appear);
     material.colorNode = vec4(vec3(1.0, 0.6, 0.28).mul(intensity), 1);
     material.opacityNode = softDisc();
 
     return field;
   }
 
-  update(ctx: FrameContext): void {
-    super.update(ctx);
-    this.animTime.value = (performance.now() / 1000) % 10_000;
-    if (this.granulation) ctx.renderer.compute(this.granulation);
-    if (this.disturbance) {
-      this.disturbance.update(ctx.renderer, this.localPointerRay(ctx, this.fields[0].object), ctx.dt, ctx.nowSeconds);
-    }
-  }
-
-  // TODO(fase 2): protuberancias como partículas que siguen arcos magnéticos.
-
-  dispose(): void {
-    for (const f of this.fields) f.dispose();
-  }
+  // TODO(fase 4): protuberancias como partículas que siguen arcos magnéticos.
 }

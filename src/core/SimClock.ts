@@ -12,6 +12,8 @@ export const TIME_RATES: readonly { rate: number; label: string }[] = [
   { rate: 6 * 3600, label: '6 h/s' },
   { rate: 86_400, label: '1 día/s' },
   { rate: 7 * 86_400, label: '1 semana/s' },
+  { rate: 30 * 86_400, label: '1 mes/s' },
+  { rate: 365.25 * 86_400, label: '1 año/s' },
 ];
 
 export class SimClock {

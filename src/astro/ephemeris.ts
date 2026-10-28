@@ -1,16 +1,19 @@
 /**
- * Posición de cada cuerpo relativa a su padre y orientación. Ver docs/ARQUITECTURA.md §5.
+ * Posición de cada cuerpo relativa a su padre y rotación propia. Ver docs/ARQUITECTURA.md §5.
  */
-import type { BodyData } from './bodies';
+import { BODIES, type BodyData } from './bodies';
 import type { Vec3d } from './frames';
 import { heliocentricPosition } from './kepler';
 import { moonGeocentricPosition } from './moon';
+import { primeMeridian } from './orientation';
+import { satellitePosition } from './satellites';
 import { daysSinceJ2000 } from './units';
 
 /** Posición relativa al cuerpo padre, eclíptica J2000 (km). El Sol devuelve (0,0,0). */
 export function positionRelativeToParent(body: BodyData, timeMs: number): Vec3d {
   if (body.id === 'moon') return moonGeocentricPosition(timeMs);
   if (body.orbit) return heliocentricPosition(body.orbit, timeMs);
+  if (body.satellite && body.parent) return satellitePosition(body.satellite, BODIES[body.parent], timeMs);
   return { x: 0, y: 0, z: 0 };
 }
 
@@ -28,11 +31,14 @@ export function greenwichMeanSiderealTime(timeMs: number): number {
 }
 
 /**
- * Ángulo de rotación propia (rad, en [0, 2π)) para cuerpos sin modelo específico.
- * TODO(fase 2): usar W0 y polos de la IAU (WGCCRE) para cada cuerpo.
+ * Ángulo de giro propio (rad, en [0, 2π)) alrededor del polo, medido desde el nodo Q
+ * (ver astro/orientation.ts). La Tierra usa el tiempo sidéreo: su nodo Q está en
+ * RA 90°, así que el giro es GMST − 90°.
  */
-export function genericRotationAngle(body: BodyData, timeMs: number): number {
-  const periodDays = body.rotationPeriodH / 24;
-  const turns = (daysSinceJ2000(timeMs) / periodDays) % 1;
-  return (turns < 0 ? turns + 1 : turns) * TWO_PI;
+export function spinAngle(body: BodyData, timeMs: number): number {
+  if (body.id === 'earth') {
+    const a = greenwichMeanSiderealTime(timeMs) - Math.PI / 2;
+    return a < 0 ? a + TWO_PI : a;
+  }
+  return primeMeridian(body.pole, timeMs);
 }

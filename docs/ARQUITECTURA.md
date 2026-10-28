@@ -30,15 +30,16 @@ src/
 ├── config.ts            Presupuestos de partículas, flags globales
 ├── core/                Renderer, bucle, tiempo simulado, origen flotante
 ├── scale/               Conversión km reales → unidades de escena (comprimida/real)
-├── astro/               Datos de cuerpos, unidades, órbitas keplerianas
-├── particles/           Partículas en GPU, horneado en worker, orden progresivo, LOD
-├── bodies/              Cada tipo de cuerpo celeste (Sol, rocoso, gaseoso, anillos…)
+├── astro/               Datos de cuerpos, unidades, órbitas keplerianas, lunas, orientación IAU
+├── particles/           Partículas en GPU, horneado en worker, orden progresivo, LOD, perturbación
+├── bodies/              Cada tipo de cuerpo celeste (Sol, rocoso, gaseoso, anillos…), niveles de detalle, órbitas
 ├── surface/             Quadtree de cubo-esfera y chunks para el aterrizaje
 ├── navigation/          Cámara y modos: vuelo libre, órbita, viaje
 ├── postfx/              Bloom, tone mapping, efecto warp
 └── ui/                  HUD, panel de información, panel de debug
 scripts/
-└── build-stars.mjs      Catálogo Yale BSC → public/data/stars.bin
+├── build-stars.mjs      Catálogo Yale BSC → public/data/stars.bin
+└── build-mars-height.py MOLA MEGDR → public/textures/mars/height_3k.png
 ```
 
 Regla de dependencias (de abajo arriba): `astro`, `scale` → `core` → `particles` → `bodies`, `surface` → `navigation`, `postfx`, `ui` → `main`. Nada de abajo importa de arriba.
@@ -50,10 +51,11 @@ Cada frame:
 1. `SimClock.tick(dtReal)` → avanza el tiempo simulado (tiempo real, 1 min/s, 10 min/s… 1 semana/s).
 2. `layoutSystem` (`core/SystemLayout.ts`): posición verdadera de cada cuerpo (km, float64, vía `astro/ephemeris`) y su posición en **espacio de escena** (float64, vía `ScaleSystem`).
 3. `CameraRig` + modo de navegación: posición de la cámara en espacio de escena (`origin.cameraScene`) y hacia dónde mira.
-4. Cada cuerpo (`BaseBody.update`): `FloatingOrigin` lo coloca en `(posEscena − posCámara)` → float32 cerca de 0; orientación (rotación propia); dirección al Sol; LOD por densidad (§6.3).
-5. Pasadas *compute* en GPU solo para lo que cambia cada frame y es caro (fase 1: granulación del Sol). Lo que es función directa del tiempo y barato se calcula en el vertex shader.
-6. Render + `RenderPipeline` (bloom, tone mapping; warp en fase 4).
-7. HUD.
+4. Cada cuerpo (`BaseBody.update`): `FloatingOrigin` lo coloca en `(posEscena − posCámara)` → float32 cerca de 0; orientación IAU (polo + giro); dirección al Sol; niveles de detalle y LOD por densidad (§6.3).
+5. Órbitas (`OrbitLines`) y cinturones (`AsteroidBelt`), colocados en su padre con el origen flotante.
+6. Pasadas *compute* en GPU solo para lo que cambia cada frame y es caro o tiene estado: granulación del Sol, perturbación del ratón, flujo de los gigantes, giro de los anillos y Kepler de los asteroides. Lo que es función directa del tiempo y barato se calcula en el vertex shader.
+7. Render + `RenderPipeline` (bloom, tone mapping; warp en fase 4).
+8. HUD y etiquetas.
 
 ## 4. Precisión numérica y escalas
 
@@ -91,20 +93,29 @@ Lunas y cámara usan **la misma función**, así que la cámara nunca se cree fu
 - **Real**: `radius = localDistance = km / 1000` (1 unidad = 1.000 km). Lineal y honesta.
 - **Comprimida** (por defecto):
   - Radio inflado: `R' = c · r^p` (c = 2,3; p = 0,45). Los cuerpos pequeños se ven y se respeta el orden de tamaños.
-  - Distancia: `localDistance = R'padre · h(d / rPadre)`, con `h(x) = x` hasta `x0` = 2 radios (proporciones reales cerca del cuerpo: altitud, relieve) y `h(x) = x0 · (1 + ln(x / x0))` más allá. Valor y pendiente continuos en `x0`: el zoom no da tirones.
-  - Valores actuales: R'☉ = 979, R'⊕ = 118,5, R'☾ = 66; Sol–Mercurio ≈ 9.260; Sol–Tierra ≈ 11.100; Tierra–Luna ≈ 1.030 (> R'⊕ + R'☾ = 184,5).
-- **Transición animada**: `blend ∈ [0,1]` interpola ambas funciones en unos 2 s (`setMode('real')`), así el cambio de escala es un efecto visual en sí mismo. El modo real llega en la fase 2.
+  - Distancia: `localDistance = R'padre · h(d / rPadre)`, con un perfil `h(x)` de tres tramos, con valor y pendiente continuos en cada unión (el zoom no da tirones):
+    1. **Lineal** hasta `x0` = 2 radios: proporciones reales cerca del cuerpo (altitud, relieve, anillos).
+    2. **Logarítmico** hasta `xc` = el tamaño de su sistema de lunas (`BodyData.systemRadii`: la luna o anillo más lejano × 1,3; 20 radios si no tiene; 4 para el Sol): `h = x0 · (1 + ln(x / x0))`. Comprime las lunas para que quepan entre los planetas vecinos.
+    3. **Potencia** más allá: `h = hc + (x0 / q) · ((x / xc)^q − 1)` con q = 0,5. Reparte los planetas sin amontonarlos y deja encuadrar todo el sistema.
+  - Ajuste (con un script de comprobación): ningún sistema de lunas ocupa más de ⅓ del hueco hasta la órbita vecina, las distancias son monótonas y desde el Sol cabe la órbita de Neptuno. Con el perfil logarítmico único de la fase 1, la Luna (1.040) se salía del hueco hasta Venus (630) y Calisto (2.500) del de Saturno (1.200).
+  - Valores actuales: R'☉ = 979, R'⊕ = 118,5, R'♃ = 348; órbitas de Mercurio 17.300, Tierra 28.100, Júpiter 64.900, Saturno 88.100, Neptuno 156.900, Plutón 179.800; Tierra–Luna 1.040, Júpiter–Calisto 2.500, anillo F a 760 del centro de Saturno. Encuadrar Neptuno desde el Sol pide ~180 UA de distancia: el zoom llega a 3·10¹⁰ km (200 UA).
+- **Transición animada**: `blend ∈ [0,1]` interpola ambas funciones en unos 2,5 s (`setMode('real')`, tecla `E`), así el cambio de escala es un efecto visual en sí mismo.
+- **En los shaders**: anillos, asteroides y órbitas se colocan en la GPU con `ScaleSystem.distanceNode(padre, km)`, la misma función en TSL (uniforms que `update` refresca). Siguen la transición sin recalcular nada en la CPU.
 - Los parámetros (`compressedParams`) se ajustan en vivo desde el panel de debug.
+- Profundidad y fondo: el plano lejano está a 10¹⁰ y la esfera de estrellas a 10⁹, por encima de todo incluso en escala real (Plutón ≈ 6·10⁶).
 
 ## 5. Astronomía (`astro/`)
 
 - `bodies.ts`: tabla de datos de cada cuerpo (radio medio, achatamiento, inclinación del eje, periodo de rotación, elementos orbitales, padre, texturas, tipo de render).
 - `kepler.ts`: posición a partir de los **elementos orbitales aproximados de JPL** (*Keplerian Elements for Approximate Positions of the Major Planets*, válidos 1800–2050) con sus tasas por siglo. Resolución de la ecuación de Kepler por Newton-Raphson. Precisión de unos pocos minutos de arco: de sobra para lo visual.
-- `moon.ts`: Luna geocéntrica con la fórmula de baja precisión del *Astronomical Almanac* (~0,3°) más la corrección de precesión a J2000. Fase 2: resto de lunas con elementos medios.
-- `ephemeris.ts`: posición relativa al padre y rotación propia.
-  - **Tierra**: inclinación −ε alrededor del eje del equinoccio y giro = tiempo sidéreo de Greenwich (GMST). Verificado: punto subsolar en lon +1,5° y lat −0,2° el 20/03/2026 a las 12:00 UTC (≈ ecuación del tiempo), y lat ±23,44° en los solsticios.
+- `moon.ts`: Luna geocéntrica con la fórmula de baja precisión del *Astronomical Almanac* (~0,3°) más la corrección de precesión a J2000.
+- `satellites.ts`: resto de lunas con los **elementos medios de JPL** (época J2000) en su plano de Laplace o en el ecuador del planeta, con giro de ápsides y precesión del nodo. Titán lleva ω y M reajustados y Tritón va sin precesión del nodo: con los valores publicados se desviaban 157° y 59° de JPL Horizons.
+- `orientation.ts`: **orientación IAU** (WGCCRE 2015, kernel `pck00011.tpc` de NAIF) de todos los cuerpos: polo (α0, δ0 con su deriva) y meridiano principal `W = W0 + Ẇ·d`. Marco del cuerpo: x hacia el nodo Q del ecuador sobre el ecuador ICRF, y hacia el polo; el giro W alrededor de y lleva x a la longitud 0°. Así Urano va de lado, el polo de Saturno (y sus anillos) tiene la inclinación de la fecha y las lunas síncronas miran a su planeta. Las órbitas de las lunas usan el mismo plano.
+- `ephemeris.ts`: posición relativa al padre y ángulo de giro.
+  - **Tierra**: polo del ecuador J2000 y giro = tiempo sidéreo de Greenwich (GMST) − 90° (su nodo Q está en RA 90°). Verificado: punto subsolar en lon +1,5° y lat −0,2° el 20/03/2026 a las 12:00 UTC (≈ ecuación del tiempo), y lat ±23,44° en los solsticios.
   - **Luna**: rotación síncrona, lon 0° hacia la Tierra (queda la libración en latitud, real).
-  - Resto: periodo sidéreo con fase 0 en J2000 (fase 2: polos y W0 de la IAU).
+  - Resto: W de la IAU.
+- **Verificación contra JPL Horizons** (vectores eclípticos J2000, 27/10/2026): planetas y Plutón con error angular < 0,08°; Luna 0,19°; Ío, Europa, Ganímedes y Calisto ~0,1°; Caronte 0,15°; Titán < 0,4° y Tritón < 7° (en 2000, 2013 y 2026).
 - Convención de texturas: lon = atan2(−z, x) en el espacio local del cuerpo (este = −z), así un giro positivo alrededor de +y es hacia el este.
 - `units.ts`: constantes (UA en km, J2000, segundos por día) y conversión de fecha a siglos julianos.
 
@@ -132,7 +143,10 @@ Los datos estáticos de cada partícula se calculan **una vez, en Web Workers** 
 - **Distribución progresiva** (`particles/progressive.ts`):
   - Retícula de **Fibonacci** con jitter de ~0,25 separaciones: la distribución más isótropa, sin filas ni columnas de cerca. Se probó antes la secuencia R2, pero al proyectarla a la esfera se estira ~π veces en longitud y de cerca se veían columnas.
   - **Orden estratificado por niveles**: de una rejilla de cubo proyectado gruesa a otra el doble de fina, se elige al azar un punto libre por celda vacía. Cualquier prefijo cubre la esfera: es la base del LOD (§6.3).
+  - **Dentro de cada nivel, orden de bits invertidos** (código de Morton invertido, tipo van der Corput en 2D): un prefijo que se queda a medio nivel rellena la esfera de forma pareja. Con un orden al azar quedaban grumos y huecos visibles en cuanto los puntos casi se tocan (se vio en Júpiter).
 - **Distribución por densidad** (nubes): muestreo por rechazo según el brillo de la textura. Sale en orden aleatorio, así que también vale cualquier prefijo.
+- **Ruido fractal** (`BakeRequest.noise`): fBm de ruido de valor por punto, estirable en longitud. Da color a los cuerpos sin textura (Venus) y turbulencia a las bandas de los gigantes.
+- Mapas cuyo borde izquierdo no está en −180° (los de USGS con 0–360°): `BakeTexture.leftLon` desplaza la u. Una textura que falla no tumba el cuerpo: sale con su color base.
 - Para cada punto se calcula lat/lon → UV equirectangular y se muestrea con filtro bilineal:
   - **albedo** (sRGB → lineal) → color,
   - **altura** (valores crudos, `colorSpaceConversion: 'none'`) → desplazamiento radial exagerado (uniform `relief`, ajustable en vivo),
@@ -147,28 +161,30 @@ El criterio es el **tamaño angular** del cuerpo en pantalla (radio proyectado e
 
 **Implementado (fase 1): LOD continuo por densidad.** Cada cuerpo dibuja solo las `N = min(total, 2π · radioPx² / separaciónPx²)` primeras partículas (el orden estratificado garantiza que cubren la esfera), con `separaciónPx` ≈ 2,6 px CSS, y el tamaño de punto se ajusta a esa separación. Sin esto, un cuerpo pequeño en pantalla amontona cientos de miles de sprites de tamaño mínimo en unos pocos píxeles: cientos de fragmentos por píxel que la GPU tiene que serializar. En las mediciones el coste crecía al **alejarse** la Tierra (más lejos = más lento); con el LOD se invierte (en una misma tanda: 40 radios ≈ 0,2 ms frente a 2,4 radios ≈ 29 ms, siempre con la GPU en baja frecuencia, ver §12).
 
-**Pendiente (fase 2):** los niveles discretos de la tabla, el presupuesto global y la transición de condensación entre niveles.
+**Implementado (fase 2): niveles con detalle bajo demanda** (`bodies/DetailTier.ts`). Con 18 cuerpos, lo que limita no es el dibujo (el LOD por densidad ya lo acota) sino la **memoria y el tiempo de carga**: una capa rocosa ocupa ~80 B por partícula (48 de datos + 32 de la perturbación) y hornear todo al arrancar serían más de 0,5 GB y varios segundos.
 
-| Nivel | Cuándo | Representación | Partículas aprox. |
+| Nivel | Cuándo | Representación | Partículas |
 |---|---|---|---|
-| **L0 — Punto** | < 4 px | Un sprite brillante con el color medio del cuerpo | 1 |
-| **L1 — Nube** | 4–150 px | Prefijo corto de la esfera en orden estratificado | 5k–50k |
-| **L2 — Globo** | 150 px – órbita baja | Esfera densa con relieve, nubes y atmósfera | 500k–2M |
-| **L3 — Superficie** | Órbita baja → suelo | L2 de fondo + chunks del quadtree alrededor de la cámara (§7) | 2M–6M en total |
+| **Punto** | < 4 px | Sprite brillante con el color del cuerpo, en la cara que mira a la cámara (`BaseBody`) | 1 |
+| **Vista previa** | Siempre en memoria | La misma esfera con pocas partículas, sin perturbación ni flujo | ≤ 40k (cubre hasta ~200 px de radio) |
+| **Completo** | Al enfocar el cuerpo o al pasar de 160 px | Todas las capas, con perturbación del ratón, flujo de bandas y anillos densos | 150k–1,2M |
+| **Superficie** (fase 3) | Órbita baja → suelo | Completo de fondo + chunks del quadtree alrededor de la cámara (§7) | 2M–6M en total |
 
-- Transición entre niveles con **"condensación"**: las partículas nacen desplazadas hacia fuera y se asientan en su sitio. Ya se usa al aparecer cada cuerpo (`BaseBody.condense`, ~2 s): es el efecto "el planeta se forma desde el polvo".
-- **Presupuesto global** (`config.ts`): si la suma supera el límite, el `LodManager` baja el nivel de los cuerpos menos importantes en pantalla.
+- El completo se empieza a hornear **al elegir el cuerpo**, así que se solapa con el viaje. Al llegar entra con la **condensación** (`BaseBody.condense`, 1,4 s) y la vista previa se oculta al terminar.
+- Se **libera** cuando lleva 15 s sin foco y por debajo de 60 px (`config.lod`). three r186 no tiene API pública para soltar buffers de almacenamiento: `particles/gpu.ts` usa el registro interno del renderer, aislado en una función. Verificado con `renderer.info.memory`: al alejarse de Júpiter la memoria vuelve exactamente al valor previo.
+- Dentro de cada nivel sigue el LOD por densidad. Las capas con otra área (anillos) llevan su propio factor de fracción.
+- Pendiente: presupuesto global de partículas entre cuerpos (hoy no hace falta: solo hay uno o dos completos a la vez).
 
 ### 6.4 Interacción con el ratón (`particles/Disturbance.ts`)
 
 Al pasar el cursor por encima, las partículas cercanas se desordenan y luego vuelven a su sitio. Es la primera **simulación con estado**:
 
-- Cada capa (superficie de la Tierra y la Luna, nubes, superficie del Sol) tiene dos buffers extra por partícula: desplazamiento y velocidad.
+- Cada capa del detalle completo (superficies rocosas, globos gaseosos, nubes, superficie del Sol) tiene dos buffers extra por partícula: desplazamiento y velocidad. La vista previa no los lleva.
 - Una pasada compute por frame integra un **muelle amortiguado** (Euler semi-implícito) hacia la posición de reposo. Esa posición es la misma expresión TSL que usa el material, leída con `buffer.element(i)` en vez de `toAttribute()`.
 - El Engine calcula el rayo del cursor en mundo (la cámara está en el origen) y cada cuerpo lo lleva al espacio local de cada capa (`BaseBody.localPointerRay`), con un radio de influencia en píxeles (`disturbanceLook.radiusPx`) convertido a unidades locales según la distancia.
 - Dirección del empuje: fuera del rayo, algo hacia fuera de la superficie y un vector aleatorio por partícula (`hash(instanceIndex)`) que domina (`disorder`), así que se revuelven en vez de abrir un agujero limpio.
 - Solo se simula mientras hace falta: con el cursor encima y hasta 4 s después, que es lo que tardan en asentarse.
-- Coste de memoria: 32 B más por partícula (unos 38 MB para la Tierra).
+- Coste de memoria: 32 B más por partícula (unos 38 MB para la Tierra), solo en el cuerpo con detalle completo.
 
 ## 7. Superficie y aterrizaje (`surface/`)
 
@@ -201,23 +217,25 @@ Todos implementan `CelestialBody` (`bodies/CelestialBody.ts`): `update(ctx)`, `s
 
 | Clase | Técnica |
 |---|---|
-| `Sun` ✅ | 320k partículas. Granulación (Worley) y regiones activas (fractal) calculadas en una **pasada compute** por frame; oscurecimiento del limbo; HDR para el bloom. Corona: 70k partículas aditivas con flujo hacia fuera sin estado. Fase 2: protuberancias. |
-| `RockyPlanet` ✅ | Horneado §6.2 + superficie §7 (fase 3). 1,2M partículas en la Tierra y 400k en la Luna. Lambert con *wrap* para suavizar el terminador; luces de ciudades en HDR solo en el lado nocturno; reflejo Blinn-Phong en el agua. |
-| `Atmosphere` ✅ | Cáscara fina (4 % del radio) de 140k partículas aditivas, más densa abajo. El brillo del limbo sale de la geometría (la línea de visión cruza más partículas) más un término de Fresnel. Azul de día y naranja en el terminador. Solo se dibuja el anillo cercano al limbo: las de cara a la cámara apenas aportan y eran el grueso del coste. |
-| `CloudLayer` ✅ | 320k partículas translúcidas repartidas por densidad de la textura de nubes, deriva de la capa respecto a la superficie. Fase 2: turbulencia con *curl noise* en compute y sombra sobre la superficie. |
-| `GasGiant` | Partículas que se mueven en longitud con velocidad según la latitud (bandas), más vórtices con *curl noise* (Gran Mancha Roja). Color de textura real. |
-| `Rings` | Partículas en un disco con densidad de la textura radial de los anillos y **velocidad kepleriana** (`v ∝ r^-1/2`), así las de dentro van más rápido. La sombra del planeta sobre los anillos se calcula en shader. |
-| `AsteroidBelt` | Decenas de miles de partículas con elementos orbitales aleatorios (distribución con los huecos de Kirkwood), cada una propagada con Kepler en GPU. |
-| `Starfield` ✅ | Yale BSC (9.096 estrellas, `scripts/build-stars.mjs`) a radio 10⁶ alrededor de la cámara, tamaño constante en píxeles. Magnitud → tamaño y brillo, índice B-V → color. Fase 2: Vía Láctea con partículas muestreadas de un panorama. |
+| `Sun` ✅ | 320k partículas. Granulación (Worley) y regiones activas (fractal) calculadas en una **pasada compute** por frame; oscurecimiento del limbo; HDR para el bloom. Corona: 70k partículas aditivas con flujo hacia fuera sin estado. Fase 4: protuberancias. |
+| `RockyPlanet` ✅ | Horneado §6.2 + superficie §7 (fase 3). Mercurio, Venus, Tierra, Luna, Marte, las cuatro galileanas, Titán, Tritón, Plutón y Caronte (150k–1,2M partículas en el detalle completo). Lambert con *wrap* para suavizar el terminador; luces de ciudades en HDR solo en el lado nocturno; reflejo Blinn-Phong en el agua. Opciones por cuerpo (`presets.ts`): tinte y ganancia (los muy claros, por debajo del umbral del bloom), color por ruido fractal sin textura (Venus), relleno de las zonas sin datos de los mosaicos con el color medio. |
+| `Atmosphere` ✅ | Cáscara fina de partículas aditivas, más densa abajo. El brillo del limbo sale de la geometría (la línea de visión cruza más partículas) más un término de Fresnel. Colores de día y de terminador por cuerpo (Tierra azul y naranja, Marte tenue, Titán una bruma naranja espesa). Solo se dibuja el anillo cercano al limbo: las de cara a la cámara apenas aportan y eran el grueso del coste. |
+| `CloudLayer` ✅ | 320k partículas translúcidas repartidas por densidad de la textura de nubes, deriva de la capa respecto a la superficie. Pendiente: turbulencia con *curl noise* en compute y sombra sobre la superficie. |
+| `GasGiant` ✅ | Júpiter (mapa de Cassini), Saturno, Urano y Neptuno (perfil de bandas procedural con turbulencia de ruido), achatados. Una pasada compute mueve las partículas (que llevan su color) con dos giros que conservan el área: **bandas rígidas** en sentidos alternos con bordes estrechos (una cizalla continua deshacía el reparto uniforme de los puntos) y **vórtices** que giran enteros alrededor de su centro (la Gran Mancha Roja, la Gran Mancha Oscura de Neptuno). Velocidades artísticas en tiempo real, como la granulación del Sol. Limbo oscurecido y **sombra de los anillos** sobre el globo (rayo hacia el Sol contra el plano del ecuador). |
+| `Rings` ✅ | Saturno (C, B, división de Cassini, A con el hueco de Encke, F; 700k partículas) y los anillos finos y oscuros de Urano. Radio muestreado del perfil (en km) y pasado a escena con `distanceNode`, como las lunas. **Velocidad kepleriana** ω = √(GM/r³) integrada en compute (cada partícula su ω), con el paso limitado cuando el tiempo va muy rápido para que no se vuelva ruido. Cara iluminada o en contraluz y **sombra del planeta** sobre los anillos. |
+| `AsteroidBelt` ✅ | Cinturón principal (60k, con los huecos de Kirkwood 4:1, 3:1, 5:2, 7:3 y 2:1), troyanos de Júpiter en L4 y L5 (15k) y cinturón de Kuiper (30k). Elementos orbitales aleatorios; una pasada compute avanza la anomalía media con el tiempo simulado y resuelve Kepler (también tras un salto de fecha). Puntos de tamaño fijo, atenuados cuando la cámara está dentro del cinturón. |
+| `OrbitLines` ✅ | Órbitas de partículas: puntos muestreados en el tiempo (una vuelta hacia atrás) con las mismas efemérides que mueven cada cuerpo, más brillantes justo detrás de él (estela). Se apagan cerca del cuerpo y cuando la órbita es diminuta en pantalla. |
+| `Starfield` ✅ | Yale BSC (9.096 estrellas, `scripts/build-stars.mjs`) a radio 10⁹ alrededor de la cámara, tamaño constante en píxeles. Magnitud → tamaño y brillo, índice B-V → color. Fase 4: Vía Láctea con partículas muestreadas de un panorama. |
 
 ## 9. Navegación (`navigation/`)
 
 `CameraRig` mantiene la posición de la cámara en espacio de escena (float64, `origin.cameraScene`), el punto al que mira y la distancia a la superficie (para el plano cercano dinámico). Delega en el modo activo:
 
-- **`OrbitMode`** ✅: arrastrar para girar alrededor del cuerpo enfocado y rueda para acercarse. La distancia se guarda en km verdaderos y pasa a escena con `localDistance` del cuerpo enfocado (§4.3). El zoom es multiplicativo sobre la **altitud**, para poder pasar de millones de km a la superficie con la rueda (fase 1: mínimo 4 % del radio; fase 3: hasta el suelo). Al cambiar de foco hay una **transición** de ~2,6 s: la cámara vuela en línea recta hacia el nuevo cuerpo (interpolación logarítmica de distancia) y la mirada gira hacia él en el primer 40 %.
+- **`OrbitMode`** ✅: arrastrar para girar alrededor del cuerpo enfocado y rueda para acercarse. La distancia se guarda en km verdaderos y pasa a escena con `localDistance` del cuerpo enfocado (§4.3). El zoom es multiplicativo sobre la **altitud**, para poder pasar de cientos de UA a la superficie con la rueda (fase 2: mínimo 4 % del radio; fase 3: hasta el suelo).
+- **Viaje entre cuerpos** ✅ (en `OrbitMode.focusOn`, no en un modo aparte): dura de 2,4 a 5,5 s según cuánto cambia la escala; la distancia se interpola en escala logarítmica; la dirección gira (slerp) de la de salida a una **llegada por el lado de día** (37° del Sol, algo por encima del plano) y a mitad de viaje la cámara **sube sobre el plano del sistema**, así se ven la salida y la llegada. La mirada pasa del cuerpo de origen al de destino en el primer 40 %. Al arrancar, la cámara también mira el lado de día.
 - **`FreeFlyMode`**: WASD + ratón (pointer lock) y Q/E para alabeo. Velocidad automática proporcional a la distancia al cuerpo más cercano (lento cerca, rapidísimo en el vacío), con Shift como multiplicador. Colisión suave con la superficie.
-- **`TravelMode`**: al hacer clic en un cuerpo, trayectoria con aceleración y frenado en espacio logarítmico de distancia (se ve tanto la salida como la llegada). Activa el efecto *warp* en `postfx` según la velocidad.
-- Selección ✅: clic (sin arrastre) con *ray picking* contra esferas analíticas (`navigation/picking.ts`, radio mínimo de 14 px para cuerpos diminutos), botones del HUD o teclas 1–3.
+- Selección ✅: clic (sin arrastre) con *ray picking* contra esferas analíticas (`navigation/picking.ts`, radio mínimo de 14 px para cuerpos diminutos), clic en una etiqueta, botones del HUD o teclas 0–9.
+- Fase 4: efecto *warp* en `postfx` según la velocidad del viaje.
 
 ## 10. Post-procesado (`postfx/`)
 
@@ -229,10 +247,10 @@ Todos implementan `CelestialBody` (`bodies/CelestialBody.ts`): `update(ctx)`, `s
 
 ## 11. UI (`ui/`)
 
-- **HUD** ✅: cuerpo enfocado, altitud, fecha simulada (UTC), velocidad del tiempo («, pausa, », ahora; teclas `,` `.` espacio `N`), fps, backend y partículas dibujadas; botones de cuerpos (teclas 1–3).
-- **Panel de información**: datos del cuerpo (radio, masa, día, año, temperatura).
-- **Controles**: escala comprimida/real, velocidad del tiempo, lista de cuerpos para viajar.
-- **Debug** ✅ (lil-gui, solo con `?debug`): exposición, bloom, brillo del Sol y corona, luces nocturnas, reflejo, nubes, atmósfera, estrellas, relieve por cuerpo y parámetros de la escala comprimida. Con `?debug` también quedan `window.engine` y los *timestamps* de GPU (`engine.renderer.resolveTimestampsAsync('render')`).
+- **HUD** ✅: Sol y planetas arriba (teclas 0–9) y, debajo, las lunas del sistema enfocado; cuerpo enfocado, altitud, fecha simulada (UTC), fps, backend y partículas dibujadas; tiempo («, pausa, », ahora y un campo de fecha; de tiempo real a 1 año/s; teclas `,` `.` espacio `N`); escala comprimida/real (`E`), órbitas (`O`) y nombres (`L`).
+- **Etiquetas** ✅ (`ui/Labels.ts`): nombre de los cuerpos que miden menos de 30 px, clicables. Se ocultan si quedan detrás del disco de un cuerpo más cercano o encima de otra más importante (Sol, luego planetas, luego lunas). Imprescindibles en escala real.
+- **Panel de información** (fase 4): datos del cuerpo (radio, masa, día, año, temperatura).
+- **Debug** ✅ (lil-gui, solo con `?debug`): exposición, bloom, brillo del Sol y corona, luces nocturnas, reflejo, nubes, atmósfera, estrellas, aspecto de las partículas y del ratón, flujo y bola de los gigantes, brillo de anillos, asteroides y órbitas, relieve por cuerpo y parámetros de la escala comprimida. Con `?debug` también quedan `window.engine` y los *timestamps* de GPU (`engine.renderer.resolveTimestampsAsync('render')`).
 
 ## 12. Rendimiento
 

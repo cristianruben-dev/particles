@@ -9,6 +9,7 @@
 import * as THREE from 'three/webgpu';
 import { Fn, hash, instanceIndex, instancedArray, max, smoothstep, uniform, vec3, vec4 } from 'three/tsl';
 import type { FloatNode, Vec3Node } from './nodes';
+import type { ParticleBuffer } from './ParticleField';
 
 /** Parámetros de la interacción (ajustables desde el panel de debug). */
 export const disturbanceLook = {
@@ -36,8 +37,8 @@ export interface LocalRay {
 }
 
 export class Disturbance {
-  private readonly offset;
-  private readonly velocity;
+  private readonly offset: ParticleBuffer;
+  private readonly velocity: ParticleBuffer;
   private readonly rayOrigin = uniform(new THREE.Vector3());
   private readonly rayDirection = uniform(new THREE.Vector3(0, 0, -1));
   private readonly radius = uniform(0.1);
@@ -84,6 +85,11 @@ export class Disturbance {
       vel.assign(vec4(v, 0));
       off.assign(vec4(off.xyz.add(v.mul(this.dt)), 0));
     })().compute(count);
+  }
+
+  /** Buffers y pasada compute, para liberarlos con el nivel de detalle. */
+  get resources(): { buffers: ParticleBuffer[]; computes: THREE.ComputeNode[] } {
+    return { buffers: [this.offset, this.velocity], computes: [this.step] };
   }
 
   /** Desplazamiento actual, para sumarlo a la posición de reposo en el material. */

@@ -2,9 +2,11 @@
  * Bucle principal y orquestación de módulos. Ver docs/ARQUITECTURA.md §3.
  */
 import * as THREE from 'three/webgpu';
-import { BODIES } from '../astro/bodies';
+import { BODIES, type BodyId } from '../astro/bodies';
+import { AsteroidBelt } from '../bodies/AsteroidBelt';
 import type { CelestialBody, FrameContext } from '../bodies/CelestialBody';
 import { createBody } from '../bodies/createBody';
+import { OrbitLines } from '../bodies/OrbitLines';
 import { createStarfield } from '../bodies/Starfield';
 import { config } from '../config';
 import { CameraRig } from '../navigation/CameraRig';
@@ -16,10 +18,14 @@ import { createPipeline, type BloomControls } from '../postfx/Pipeline';
 import { ScaleSystem } from '../scale/ScaleSystem';
 import { createDebugGui } from '../ui/DebugGui';
 import { Hud } from '../ui/Hud';
+import { Labels } from '../ui/Labels';
 import { FloatingOrigin } from './FloatingOrigin';
 import { createRenderer } from './Renderer';
 import { SimClock } from './SimClock';
 import { layoutSystem } from './SystemLayout';
+
+/** Teclas 0–9: el Sol y los planetas. */
+const KEY_BODIES: BodyId[] = ['sun', 'mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
 
 export class Engine {
   readonly scene = new THREE.Scene();
@@ -36,6 +42,9 @@ export class Engine {
   private isWebGLFallback = false;
   private orbit!: OrbitMode;
   private hud!: Hud;
+  private labels!: Labels;
+  private orbits!: OrbitLines;
+  private readonly belts: AsteroidBelt[] = [];
   private stars: ParticleField | null = null;
   private lastFrameMs = performance.now();
   private fps = 60;
@@ -48,7 +57,7 @@ export class Engine {
     ({ pipeline: this.pipeline, bloom: this.bloom } = createPipeline(this.renderer, this.scene, this.rig.camera));
 
     this.createBodies();
-    const earth = this.bodies.find((b) => b.data.id === 'earth') ?? this.bodies[0];
+    const earth = this.byId('earth') ?? this.bodies[0];
     // Primer frame: posiciones calculadas antes de colocar la cámara.
     layoutSystem(this.bodies, this.clock.timeMs, this.scale);
 
@@ -56,19 +65,43 @@ export class Engine {
       const hit = pickBody(x, y, this.rig.camera, this.bodies, canvas.clientHeight);
       if (hit) this.focus(hit);
     });
+    this.orbit.faceDaySide();
     this.rig.setMode(this.orbit);
 
     this.hud = new Hud(hudEl, {
-      bodies: this.bodies.map((b) => ({ id: b.data.id, name: b.data.name })),
-      onSelectBody: (id) => this.focus(this.bodies.find((b) => b.data.id === id)!),
+      bodies: this.bodies.map((b) => {
+        const key = KEY_BODIES.indexOf(b.data.id);
+        return {
+          id: b.data.id,
+          name: b.data.name,
+          parent: b.parent?.parent ? b.parent.data.id : null,
+          key: key >= 0 ? String(key) : undefined,
+        };
+      }),
+      onSelectBody: (id) => this.focus(this.byId(id)!),
       onSlower: () => this.clock.slower(),
       onFaster: () => this.clock.faster(),
       onTogglePause: () => (this.clock.paused = !this.clock.paused),
       onNow: () => (this.clock.timeMs = Date.now()),
+      onSetDate: (ms) => (this.clock.timeMs = ms),
+      onToggleScale: () => this.toggleScale(),
+      onToggleOrbits: () => (this.orbits.visible = !this.orbits.visible),
+      onToggleLabels: () => (this.labels.visible = !this.labels.visible),
     });
+    this.labels = new Labels(hudEl, this.bodies, (body) => this.focus(body));
     this.hud.setActiveBody(earth.data.id);
+    earth.setFocused(true);
     this.bindKeys();
     this.bindPointer(canvas);
+
+    this.orbits = new OrbitLines(this.bodies, this.scale);
+    this.scene.add(this.orbits.group);
+    this.belts.push(
+      new AsteroidBelt({ population: 'main', count: 60_000, sizePx: 1.3, color: 0xb8a48c }, this.scale),
+      new AsteroidBelt({ population: 'trojans', count: 15_000, sizePx: 1.2, color: 0xa8957d }, this.scale),
+      new AsteroidBelt({ population: 'kuiper', count: 30_000, sizePx: 1.2, color: 0x8fa3b8 }, this.scale),
+    );
+    for (const belt of this.belts) this.scene.add(belt.object);
 
     if (config.debug) createDebugGui({ renderer: this.renderer, bloom: this.bloom, bodies: this.bodies });
 
@@ -83,15 +116,24 @@ export class Engine {
   }
 
   focus(body: CelestialBody): void {
+    for (const b of this.bodies) b.setFocused(b === body);
     this.orbit.focusOn(body, this.rig);
     this.hud.setActiveBody(body.data.id);
+  }
+
+  toggleScale(): void {
+    this.scale.setMode(this.scale.mode === 'real' ? 'compressed' : 'real');
+  }
+
+  private byId(id: string): CelestialBody | undefined {
+    return this.bodies.find((b) => b.data.id === id);
   }
 
   private createBodies(): void {
     const byId = new Map<string, CelestialBody>();
     for (const id of config.bodies) {
       const data = BODIES[id];
-      const body = createBody(data, data.parent ? byId.get(data.parent) ?? null : null);
+      const body = createBody(data, data.parent ? byId.get(data.parent) ?? null : null, this.scale);
       if (!body) continue;
       byId.set(id, body);
       this.bodies.push(body);
@@ -111,12 +153,17 @@ export class Engine {
   private bindKeys(): void {
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement) return;
+      const key = e.key.toLowerCase();
       const n = Number(e.key);
-      if (n >= 1 && n <= this.bodies.length) this.focus(this.bodies[n - 1]);
+      const target = e.key.length === 1 && n >= 0 && n <= 9 ? this.byId(KEY_BODIES[n]) : undefined;
+      if (target) this.focus(target);
       else if (e.key === ',') this.clock.slower();
       else if (e.key === '.') this.clock.faster();
       else if (e.key === ' ') this.clock.paused = !this.clock.paused;
-      else if (e.key.toLowerCase() === 'n') this.clock.timeMs = Date.now();
+      else if (key === 'n') this.clock.timeMs = Date.now();
+      else if (key === 'e') this.toggleScale();
+      else if (key === 'o') this.orbits.visible = !this.orbits.visible;
+      else if (key === 'l') this.labels.visible = !this.labels.visible;
       else return;
       e.preventDefault();
     });
@@ -136,8 +183,8 @@ export class Engine {
     this.rig.update(dt);
 
     let pointer: THREE.Vector3 | null = null;
+    this.rig.camera.updateMatrixWorld();
     if (this.pointerNdc) {
-      this.rig.camera.updateMatrixWorld();
       this.pointerRaycaster.setFromCamera(this.pointerNdc, this.rig.camera);
       pointer = this.pointerRaycaster.ray.direction;
     }
@@ -145,6 +192,7 @@ export class Engine {
     const ctx: FrameContext = {
       timeMs: this.clock.timeMs,
       dt,
+      timeRate: this.clock.paused ? 0 : this.clock.rate,
       scale: this.scale,
       origin: this.origin,
       renderer: this.renderer,
@@ -152,8 +200,12 @@ export class Engine {
       nowSeconds: now / 1000,
     };
     for (const body of this.bodies) body.update(ctx);
+    this.orbits.update(ctx);
+    const sun = this.bodies[0];
+    for (const belt of this.belts) belt.update(ctx, sun.sceneD);
 
     this.pipeline.render();
+    this.labels.update(this.rig.camera, window.innerWidth, window.innerHeight, this.orbit.focus);
     this.hud.render({
       focusName: this.orbit.focus.data.name,
       altitudeKm: this.orbit.altitudeKm,
@@ -163,6 +215,9 @@ export class Engine {
       fps: this.fps,
       backend: this.isWebGLFallback ? 'WebGL2' : 'WebGPU',
       particles: this.bodies.reduce((n, b) => n + b.particleCount, this.stars?.count ?? 0),
+      scale: this.scale.mode,
+      orbits: this.orbits.visible,
+      labels: this.labels.visible,
     });
   };
 

@@ -59,12 +59,84 @@ body {
   border-color: var(--hud-accent);
 }
 
-.hud-bodies {
+#hud button.on {
+  border-color: rgba(255, 210, 122, 0.6);
+  color: var(--hud-accent);
+}
+
+#hud button.system {
+  border-color: var(--hud-accent);
+}
+
+.hud-top {
   position: absolute;
   top: 16px;
   left: 16px;
+  right: 16px;
   display: flex;
+  flex-direction: column;
   gap: 6px;
+}
+
+.hud-bodies,
+.hud-moons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hud-moons button {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+.hud-date {
+  pointer-events: auto;
+  font: inherit;
+  color: var(--hud-fg);
+  background: var(--hud-bg);
+  border: 1px solid var(--hud-border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  color-scheme: dark;
+}
+
+.labels {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+#hud .label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0 0 0 10px;
+  border: none;
+  background: none;
+  backdrop-filter: none;
+  font-size: 11px;
+  color: var(--hud-dim);
+  text-shadow: 0 1px 2px #000;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+#hud .label::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--dot);
+  opacity: 0.8;
+}
+
+#hud .label:hover {
+  color: var(--hud-fg);
 }
 
 .hud-panel {
@@ -87,7 +159,7 @@ body {
   color: var(--hud-accent);
 }
 
-.hud-time {
+.hud-row {
   display: flex;
   align-items: center;
   gap: 6px;

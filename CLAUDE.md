@@ -10,5 +10,7 @@ Sistema solar navegable hecho de partículas (Three.js WebGPU + TSL, TypeScript,
 - Imports: `three/webgpu` y `three/tsl`. `PostProcessing` está obsoleto: usar `RenderPipeline`.
 - Docs y comentarios en español con tildes.
 - Verificar con `npm run build` (tipos + build).
-- Al añadir un asset en `public/`, registrar origen y licencia en `docs/ASSETS.md`.
+- Al añadir un asset en `public/`, registrar origen y licencia en `docs/ASSETS.md`. Para un mapa nuevo, comprobar con accidentes conocidos que la lon 0° y el este quedan bien (`mapLeftLon` si el borde izquierdo no está en −180°).
+- Los buffers y pasadas compute de un cuerpo se crean a través de su `DetailTier` (`tier.buffer`, `tier.track`): así se liberan de la GPU al soltar el detalle completo (§6.3).
+- Partículas que se colocan en la GPU a partir de km (anillos, asteroides, órbitas) pasan a escena con `ScaleSystem.distanceNode`, nunca con su propia fórmula.
 - Al terminar una fase, marcarla en `docs/PLAN.md`.
