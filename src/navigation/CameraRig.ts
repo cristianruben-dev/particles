@@ -10,6 +10,8 @@ import type { FloatingOrigin } from '../core/FloatingOrigin';
 import type { ScaleSystem } from '../scale/ScaleSystem';
 import type { NavigationMode } from './NavigationMode';
 
+const BLEND_SECONDS = 0.9;
+
 export class CameraRig {
   readonly camera: THREE.PerspectiveCamera;
   /** Punto al que mira la cámara (escena, float64). */
@@ -20,6 +22,9 @@ export class CameraRig {
   clearance = 1;
 
   private mode: NavigationMode | null = null;
+  /** Al cambiar de modo, la mirada pasa de la anterior a la nueva en `BLEND_SECONDS`. */
+  private readonly blendFrom = new THREE.Quaternion();
+  private blend = 1;
 
   constructor(
     aspect: number,
@@ -34,7 +39,15 @@ export class CameraRig {
     return this.origin.cameraScene;
   }
 
+  get currentMode(): NavigationMode | null {
+    return this.mode;
+  }
+
   setMode(mode: NavigationMode): void {
+    if (this.mode) {
+      this.blendFrom.copy(this.camera.quaternion);
+      this.blend = 0;
+    }
     this.mode?.exit(this);
     this.mode = mode;
     mode.enter(this);
@@ -46,6 +59,11 @@ export class CameraRig {
     const p = this.position;
     this.camera.up.set(this.up.x, this.up.y, this.up.z);
     this.camera.lookAt(this.target.x - p.x, this.target.y - p.y, this.target.z - p.z);
+    if (this.blend < 1) {
+      this.blend = Math.min(1, this.blend + dt / BLEND_SECONDS);
+      const t = this.blend * this.blend * (3 - 2 * this.blend);
+      this.camera.quaternion.slerpQuaternions(this.blendFrom, this.camera.quaternion, t);
+    }
 
     // Plano cercano proporcional a la distancia al suelo: a 10 m de la Tierra comprimida
     // son ~2·10⁻⁴ unidades. Con la profundidad invertida (float) cabe de 10⁻⁹ a 10¹⁰.

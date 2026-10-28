@@ -12,6 +12,7 @@ import { OrbitLines } from '../bodies/OrbitLines';
 import { createStarfield, starLook } from '../bodies/Starfield';
 import { config } from '../config';
 import { CameraRig } from '../navigation/CameraRig';
+import { FreeFlyMode } from '../navigation/FreeFlyMode';
 import { OrbitMode } from '../navigation/OrbitMode';
 import { pickBody } from '../navigation/picking';
 import { disturbanceLook } from '../particles/Disturbance';
@@ -36,6 +37,9 @@ const formatHours = (h: number) => (h >= 48 ? `${Math.round(h / 24)} días` : `$
 /** Por debajo de esta altitud (radios) la acción principal es volver a la órbita. */
 const NEAR_GROUND_RADII = 0.05;
 
+/** Teclas del vuelo libre (las gestiona `FreeFlyMode`). */
+const FLY_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
+
 /** Teclas 0–9: el Sol y los planetas. */
 const KEY_BODIES: BodyId[] = ['sun', 'mercury', 'venus', 'earth', 'mars', 'jupiter', 'saturn', 'uranus', 'neptune', 'pluto'];
 
@@ -56,6 +60,8 @@ export class Engine {
   private bloom!: BloomControls;
   private isWebGLFallback = false;
   private orbit!: OrbitMode;
+  private fly!: FreeFlyMode;
+  private flying = false;
   private hud!: Hud;
   private labels!: Labels;
   private orbits!: OrbitLines;
@@ -87,6 +93,10 @@ export class Engine {
     });
     this.orbit.faceDaySide();
     this.rig.setMode(this.orbit);
+    this.fly = new FreeFlyMode(earth, this.bodies, canvas, (x, y) => {
+      const hit = pickBody(x, y, this.rig.camera, this.bodies, canvas.clientHeight);
+      if (hit) this.focus(hit);
+    }, (body) => this.setReference(body));
 
     const mouseStrength = disturbanceLook.strength.value;
     this.hud = new Hud(hudEl, {
@@ -162,10 +172,21 @@ export class Engine {
   }
 
   focus(body: CelestialBody): void {
-    for (const b of this.bodies) b.setFocused(b === body);
+    if (this.flying) this.exitFly();
+    this.setReference(body);
     this.orbit.focusOn(body, this.rig);
-    this.hud.setActiveBody(body.data.id, body.landable);
     this.hud.coach.dismiss();
+  }
+
+  /** Cuerpo de referencia: el enfocado en órbita o el ancla en vuelo libre. */
+  get reference(): CelestialBody {
+    return this.flying ? this.fly.anchor : this.orbit.focus;
+  }
+
+  /** El de referencia carga su detalle completo y su superficie (§6.3, §7). */
+  private setReference(body: CelestialBody): void {
+    for (const b of this.bodies) b.setFocused(b === body);
+    this.hud.setActiveBody(body.data.id, body.landable);
   }
 
   /** Aterriza en el lugar destacado del cuerpo enfocado (o bajo la cámara). */
@@ -228,7 +249,22 @@ export class Engine {
   }
 
   toggleFly(): void {
-    // Vuelo libre: siguiente paso.
+    if (this.flying) this.exitFly();
+    else this.enterFly();
+  }
+
+  private enterFly(): void {
+    this.fly.anchor = this.orbit.focus;
+    this.rig.setMode(this.fly);
+    this.flying = true;
+    this.hud.coach.dismiss();
+  }
+
+  /** Vuelve a la órbita alrededor del ancla, desde donde esté la cámara. */
+  private exitFly(): void {
+    this.orbit.adopt(this.rig, this.fly.anchor);
+    this.rig.setMode(this.orbit);
+    this.flying = false;
   }
 
   private getPref(key: string): boolean | null {
@@ -309,6 +345,13 @@ export class Engine {
         return;
       }
       const key = e.key.toLowerCase();
+      // En vuelo libre las teclas de movimiento son del modo (Q/E giran, no cambian la escala).
+      if (this.flying && FLY_KEYS.has(key)) return;
+      if (this.flying && e.key === 'Escape') {
+        this.exitFly();
+        e.preventDefault();
+        return;
+      }
       const n = Number(e.key);
       const target = e.key.length === 1 && n >= 0 && n <= 9 ? this.byId(KEY_BODIES[n]) : undefined;
       if (target) this.focus(target);
@@ -319,7 +362,7 @@ export class Engine {
       else if (key === 'e') this.toggleScale();
       else if (key === 'o') this.orbits.visible = !this.orbits.visible;
       else if (key === 'l') this.labels.visible = !this.labels.visible;
-      else if (key === 't') this.orbit.altitudeKm < this.orbit.focus.data.radiusKm * NEAR_GROUND_RADII ? this.orbit.ascend() : this.land();
+      else if (key === 't' && !this.flying) this.orbit.altitudeKm < this.orbit.focus.data.radiusKm * NEAR_GROUND_RADII ? this.orbit.ascend() : this.land();
       else if (key === 'v') this.toggleFly();
       else return;
       e.preventDefault();
@@ -368,7 +411,7 @@ export class Engine {
     for (const belt of this.belts) belt.update(ctx, sun.sceneD);
 
     // Fondo a ras de suelo (§7.4): cielo arriba, suelo abajo; de día las estrellas se apagan.
-    const sky = this.orbit.focus.sky;
+    const sky = this.reference.sky;
     horizon.amount.value = sky.amount;
     horizon.up.value.copy(sky.up);
     horizon.dip.value = sky.dip;
@@ -378,24 +421,25 @@ export class Engine {
     starLook.brightness.value = 1 - 0.95 * daySky;
 
     this.pipeline.render();
-    this.labels.update(this.rig.camera, window.innerWidth, window.innerHeight, this.orbit.focus);
-    const focus = this.orbit.focus;
-    const travel = this.orbit.travel;
+    this.labels.update(this.rig.camera, window.innerWidth, window.innerHeight, this.reference);
+    const focus = this.reference;
+    const travel = this.flying ? null : this.orbit.travel;
+    const altitudeKm = this.flying ? this.fly.altitudeKm : this.orbit.altitudeKm;
     const earth = this.byId('earth');
     const km = (a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
     this.hud.render({
       focusId: focus.data.id,
       focusName: focus.data.name,
-      altitudeKm: this.orbit.altitudeKm,
-      speedKmS: null,
+      altitudeKm,
+      speedKmS: this.flying ? this.fly.speedKmS : null,
       landable: focus.landable,
-      nearGround: this.orbit.altitudeKm < focus.data.radiusKm * NEAR_GROUND_RADII,
-      descending: this.orbit.descending,
+      nearGround: altitudeKm < focus.data.radiusKm * NEAR_GROUND_RADII,
+      descending: !this.flying && this.orbit.descending,
       sunDistanceKm: Math.hypot(focus.positionKm.x, focus.positionKm.y, focus.positionKm.z),
       earthDistanceKm: earth ? km(focus.positionKm, earth.positionKm) : 0,
-      cameraDistanceKm: this.orbit.altitudeKm + focus.data.radiusKm,
+      cameraDistanceKm: altitudeKm + focus.data.radiusKm,
       time: { date: this.clock.date, rateIndex: this.clock.rateIndex, paused: this.clock.paused },
-      tools: { scale: this.scale.mode, orbits: this.orbits.visible, labels: this.labels.visible, flying: false },
+      tools: { scale: this.scale.mode, orbits: this.orbits.visible, labels: this.labels.visible, flying: this.flying },
       travel: travel && {
         name: travel.to.data.name,
         progress: travel.progress,
