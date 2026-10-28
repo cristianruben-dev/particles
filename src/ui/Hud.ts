@@ -10,6 +10,8 @@
  */
 import { BODIES, type BodyId } from '../astro/bodies';
 import { FACTS } from '../astro/facts';
+import { GALAXIES, GALAXY_IDS, type GalaxyId } from '../astro/galaxies';
+import { LY_KM } from '../astro/units';
 import type { FrameStats, Quality } from '../core/Quality';
 import { BodyDock, type HudBody } from './BodyDock';
 import { ConstellationPanel, type ConstellationSource } from './ConstellationPanel';
@@ -27,6 +29,9 @@ export type { HudBody } from './BodyDock';
 
 export interface HudActions extends TimeActions, TitleActions {
   bodies: HudBody[];
+  onSelectGalaxy(id: GalaxyId): void;
+  /** Desde el cosmos, de vuelta al sistema solar. */
+  onSolarSystem(): void;
   /** Eclipses, tránsitos y cometas para el calendario. */
   events: Omit<EventsSource, 'onClose'>;
   /** Constelaciones: interruptores, lista y ficha. */
@@ -58,6 +63,8 @@ export interface HudState extends InfoLive {
   particles: number;
   pixelRatio: number;
   backend: string;
+  /** Fuera del sistema solar (§14.5): la galaxia de referencia y la distancia de la cámara a su centro. */
+  cosmic: { id: GalaxyId; distanceKm: number; sunKm: number } | null;
 }
 
 export class Hud {
@@ -92,7 +99,15 @@ export class Hud {
     this.perf = new PerfMeter(() => this.toggleSettings());
     this.settings = new SettingsPanel(actions.quality, actions.toggles, () => this.settings.setOpen(false));
     this.time = new TimeBar(actions);
-    this.dock = new BodyDock(actions.bodies, (id) => actions.onSelectBody(id));
+    const galaxies = GALAXY_IDS.map((id) => {
+      const g = GALAXIES[id];
+      return { id, name: g.short ?? g.name, parent: g.parent ?? null, color: g.color, diameterLy: g.diameterLy, kind: g.shape.kind };
+    });
+    this.dock = new BodyDock(actions.bodies, galaxies, {
+      onSelect: (id) => actions.onSelectBody(id),
+      onSelectGalaxy: (id) => actions.onSelectGalaxy(id as GalaxyId),
+      onSolarSystem: actions.onSolarSystem,
+    });
     this.tools = new Toolbar({
       onSetScale: actions.onSetScale,
       onToggleOrbits: actions.onToggleOrbits,
@@ -188,6 +203,17 @@ export class Hud {
     const body = this.actions.bodies.find((b) => b.id === id);
     if (body) this.root.style.setProperty('--body', accentColor(body.color));
     this.info.show(id, landable);
+    this.root.classList.remove('cosmic');
+  }
+
+  /** Galaxia de referencia (§14.5): la barra pasa a las galaxias, el acento a su color y la ficha a sus datos. */
+  private setActiveGalaxy(id: GalaxyId): void {
+    this.activeId = `galaxy:${id}`;
+    this.dock.setActiveGalaxy(id);
+    const g = GALAXIES[id];
+    this.root.style.setProperty('--body', accentColor(g.color));
+    this.info.showGalaxy(g, GALAXY_IDS.filter((s) => GALAXIES[s].parent === id).map((s) => GALAXIES[s].name));
+    this.root.classList.add('cosmic');
   }
 
   render(s: HudState, now: number): void {
@@ -200,6 +226,11 @@ export class Hud {
     if (now - this.lastRender < 50) return;
     this.lastRender = now;
 
+    if (s.cosmic) {
+      if (`galaxy:${s.cosmic.id}` !== this.activeId) this.setActiveGalaxy(s.cosmic.id);
+      this.renderGalaxy(s, s.cosmic);
+      return;
+    }
     if (s.focusId !== this.activeId) this.setActiveBody(s.focusId, s.landable);
     const site = FACTS[s.focusId].site;
     // En un cometa el radio es el de referencia de la coma: cuenta la distancia al núcleo.
@@ -224,6 +255,29 @@ export class Hud {
     this.events.update(s.time.date.getTime());
     this.sky.update(s.time.date.getTime(), now);
     this.settings.update({ particles: s.particles, pixelRatio: s.pixelRatio, backend: s.backend, fps: s.stats.fps, frameMs: s.stats.frameMs }, now);
+  }
+
+  /** El título y la ficha de una galaxia: distancia de la cámara a su centro y a qué distancia está de aquí. */
+  private renderGalaxy(s: HudState, cosmic: NonNullable<HudState['cosmic']>): void {
+    const g = GALAXIES[cosmic.id];
+    this.title.update({
+      id: `galaxy:${g.id}`,
+      name: g.name,
+      kicker: `${g.type} · ${g.group}`,
+      altitudeKm: cosmic.distanceKm,
+      altitudeLabel: g.id === 'milkyway' ? 'Del centro' : 'Distancia',
+      sunDistanceKm: 0,
+      second: g.id === 'milkyway' ? { label: 'Del Sol', km: cosmic.sunKm } : { label: 'De la Tierra', km: g.distanceLy * LY_KM },
+      speedKmS: null,
+      landable: false,
+      nearGround: false,
+      descending: false,
+      siteName: null,
+    });
+    this.tools.update({ ...s.tools, sky: this.sky.open });
+    this.info.update({ ...s, cameraDistanceKm: cosmic.distanceKm }, performance.now());
+    this.events.update(s.time.date.getTime());
+    this.settings.update({ particles: s.particles, pixelRatio: s.pixelRatio, backend: s.backend, fps: s.stats.fps, frameMs: s.stats.frameMs }, performance.now());
   }
 
   /**

@@ -73,6 +73,30 @@ const GALAXY_Q = (() => {
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
 })();
 
+/**
+ * Destino de un viaje cósmico (§14.5): una galaxia que orbitar, o la vuelta a la órbita del
+ * Sol (la Vía Láctea entera o el sistema solar). Durante el viaje y alrededor de una galaxia
+ * el Sol sigue enfocado: la escena solar se queda quieta en el borde del relevo.
+ */
+export interface CosmicDestination {
+  /** La galaxia ('milkyway', 'm31'…) o 'sun' (vuelta al sistema solar), para la interfaz. */
+  id: string;
+  /** Centro respecto al Sol (km, ejes de escena). En 'sun', el del pivote a esa distancia. */
+  centerKm: Vec3d;
+  radiusKm: number;
+  /** Normal del disco (unitaria, escena): el «arriba» y el eje del arrastre al orbitarla. */
+  normal: Vec3d;
+  /** Desde dónde se la mira al llegar (unitaria, escena) y a qué distancia del centro (km). */
+  arrivalDir: Vec3d;
+  viewKm: number;
+  /** 'galaxy': orbitarla. 'sun': volver a la órbita del Sol a `viewKm`. */
+  mode: 'galaxy' | 'sun';
+}
+/** Alrededor de una galaxia, hasta ~100 millones de años luz: se ve su grupo o su cúmulo. */
+const COSMIC_TARGET_MAX_KM = 1e21;
+/** Duración de un viaje cósmico: más largo cuanto más cambia la escala (3,5–9 s). */
+const cosmicTripSeconds = (ratio: number) => Math.min(9, Math.max(3.5, 2.6 + 0.6 * Math.log10(Math.max(ratio, 1))));
+
 export class OrbitMode implements NavigationMode {
   readonly name = 'orbit';
 
@@ -135,6 +159,28 @@ export class OrbitMode implements NavigationMode {
   private readonly trueCamera: Vec3d = { x: 0, y: 0, z: 0 };
   private trueCameraValid = false;
 
+  /** Galaxia que se orbita (§14.5), con su marco (y = la normal del disco). */
+  private cosmicTarget: CosmicDestination | null = null;
+  private readonly targetQ = new THREE.Quaternion();
+  private cosmicTrip: {
+    t: number;
+    duration: number;
+    dest: CosmicDestination;
+    fromPivot: Vec3d;
+    fromKm: number;
+    fromDir: Dir;
+    fromUp: Dir;
+    toUp: Dir;
+    /** Cuánto se aleja la cámara a mitad de viaje (en log de la distancia) para ver los dos lados. */
+    lift: number;
+    /** Tramo del viaje (0–1) en el que avanza el pivote. */
+    crossFrom: number;
+    crossTo: number;
+    warp: number;
+  } | null = null;
+  /** Cámara del último frame (pivote, distancia, dirección y «arriba»): de aquí parte un viaje cósmico. */
+  private readonly last = { pivot: { x: 0, y: 0, z: 0 }, distanceKm: 1, dir: { x: 1, y: 0, z: 0 } as Dir, up: { x: 0, y: 1, z: 0 } as Dir };
+
   constructor(
     initialFocus: CelestialBody,
     private readonly element: HTMLElement,
@@ -160,9 +206,28 @@ export class OrbitMode implements NavigationMode {
     return tr ? { from: tr.from, to: this.focus, progress: easeInOut(tr.t) } : null;
   }
 
+  /** Galaxia que se orbita, o null (el Sol y, lejos, la Vía Láctea). */
+  get galaxyTarget(): CosmicDestination | null {
+    return this.cosmicTarget;
+  }
+
+  get cosmicTraveling(): boolean {
+    return this.cosmicTrip !== null;
+  }
+
+  /** Adónde va el viaje cósmico en marcha, o la galaxia que se orbita. */
+  get cosmicDestination(): CosmicDestination | null {
+    return this.cosmicTrip?.dest ?? this.cosmicTarget;
+  }
+
+  /** Viaje, bajada o zoom en marcha. */
+  get busy(): boolean {
+    return this.transition !== null || this.descent !== null || this.cosmicTrip !== null;
+  }
+
   /** Efecto warp del viaje (0–1): sube y baja con la velocidad del movimiento. */
   get warp(): number {
-    const tr = this.transition;
+    const tr = this.transition ?? this.cosmicTrip;
     if (!tr) return 0;
     // La derivada de la curva de viaje (máxima a mitad), normalizada.
     const speed = Math.sin(Math.PI * Math.min(1, Math.max(0, (tr.t - 0.08) / 0.84)));
@@ -189,7 +254,7 @@ export class OrbitMode implements NavigationMode {
    * el centro hasta `toDir` (unitaria, ejes de escena): el zoom hasta la galaxia y de vuelta.
    */
   zoomTo(altitudeKm: number, toDir?: Dir): void {
-    if (this.transition) return;
+    if (this.transition || this.cosmicTrip || this.cosmicTarget) return;
     const toAltitude = Math.min(this.maxAltitude, Math.max(this.minAltitude, altitudeKm));
     const local = toDir ? this.fromScene(toDir) : null;
     const ratio = toAltitude / this.altitude;
@@ -331,11 +396,133 @@ export class OrbitMode implements NavigationMode {
     if (body.landable && this.altitude < body.data.radiusKm * BODY_FRAME_ENTER) this.setFrame('body');
   }
 
+  /**
+   * Viaje cósmico (§14.5), con el Sol enfocado: el pivote va en línea recta hasta el destino,
+   * la distancia en escala logarítmica (alejándose a mitad de camino si hace falta para ver
+   * los dos lados), la dirección por la esfera y el «arriba» hacia el del destino.
+   */
+  travelTo(dest: CosmicDestination): void {
+    if (this.transition || this.focus.parent !== null) return;
+    this.descent = null;
+    const l = this.last;
+    const span = Math.hypot(dest.centerKm.x - l.pivot.x, dest.centerKm.y - l.pivot.y, dest.centerKm.z - l.pivot.z);
+    const near = Math.min(dest.viewKm, l.distanceKm), far = Math.max(dest.viewKm, l.distanceKm);
+    const ratio = Math.max(far, span) / near;
+    // A mitad de viaje la cámara está a ~0,7 veces el salto: se ven la salida y la llegada.
+    const fromLog = Math.log(l.distanceKm), toLog = Math.log(dest.viewKm);
+    const lift = Math.max(0, Math.log(span * 0.7) - (fromLog + toLog) / 2);
+    // El pivote solo avanza mientras la cámara está lejos comparada con el salto (más de una
+    // décima): primero se aleja, cruza y después se acerca, como en «potencias de diez».
+    let crossFrom = 0, crossTo = 1;
+    if (span > 0) {
+      const ok = (e: number) => fromLog * (1 - e) + toLog * e + lift * Math.sin(Math.PI * e) >= Math.log(span * 0.1);
+      crossFrom = 1;
+      crossTo = 0;
+      for (let i = 0; i <= 200; i++) {
+        if (!ok(i / 200)) continue;
+        crossFrom = Math.min(crossFrom, i / 200);
+        crossTo = Math.max(crossTo, i / 200);
+      }
+      if (crossFrom >= crossTo) [crossFrom, crossTo] = [0, 1];
+    }
+    this.cosmicTrip = {
+      t: 0,
+      duration: cosmicTripSeconds(ratio),
+      dest,
+      fromPivot: { ...l.pivot },
+      fromKm: l.distanceKm,
+      fromDir: { ...l.dir },
+      fromUp: { ...l.up },
+      toUp: dest.mode === 'galaxy' ? tangentTo(dest.arrivalDir, dest.normal) : sunUp(dest.arrivalDir, dest.viewKm),
+      lift,
+      crossFrom,
+      crossTo,
+      warp: Math.min(1, Math.log10(Math.max(ratio, 1)) / 4),
+    };
+    this.cosmicTarget = null;
+  }
+
+  /** Fin del viaje cósmico: orbitar la galaxia o volver a la órbita del Sol, sin saltos. */
+  private arrive(dest: CosmicDestination): void {
+    this.cosmicTrip = null;
+    this.altitude = this.targetAltitude = Math.max(1, dest.viewKm - this.focus.data.radiusKm);
+    if (dest.mode === 'galaxy') {
+      this.cosmicTarget = dest;
+      const y = vec(dest.normal);
+      const x = vec(tangentTo(dest.normal, dest.arrivalDir));
+      const z = new THREE.Vector3().crossVectors(x, y);
+      this.targetQ.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+      this.frame = 'galaxy';
+    } else {
+      this.cosmicTarget = null;
+      this.frame = dest.viewKm > GALAXY_FRAME_ENTER_KM ? 'galaxy' : 'scene';
+    }
+    [this.azimuth, this.elevation] = toAngles(this.fromScene(dest.arrivalDir));
+    this.targetAzimuth = this.azimuth;
+    this.targetElevation = this.elevation;
+    this.heading = this.targetHeading = this.pitch = this.targetPitch = 0;
+  }
+
+  /** Alrededor de una galaxia o de viaje entre galaxias (la escena solar, quieta en el borde). */
+  private updateCosmic(rig: CameraRig, dt: number): void {
+    const sun = this.focus;
+    let pivot: Vec3d, distanceKm: number, dir: Dir, up: Dir;
+    const trip = this.cosmicTrip;
+    if (trip) {
+      trip.t = Math.min(1, trip.t + dt / trip.duration);
+      const e = easeInOut(trip.t);
+      const f = trip.fromPivot, c = trip.dest.centerKm;
+      const s = THREE.MathUtils.smoothstep(e, trip.crossFrom, trip.crossTo);
+      pivot = { x: f.x + (c.x - f.x) * s, y: f.y + (c.y - f.y) * s, z: f.z + (c.z - f.z) * s };
+      distanceKm = Math.exp(Math.log(trip.fromKm) * (1 - e) + Math.log(trip.dest.viewKm) * e + trip.lift * Math.sin(Math.PI * e));
+      dir = slerp(trip.fromDir, trip.dest.arrivalDir, e);
+      up = rotateTowards(tangentTo(dir, trip.fromUp), tangentTo(dir, trip.toUp), dir, e);
+      if (trip.t >= 1) this.arrive(trip.dest);
+    } else {
+      const target = this.cosmicTarget!;
+      const k = 1 - Math.exp(-dt * 8);
+      this.azimuth += (this.targetAzimuth - this.azimuth) * k;
+      this.elevation += (this.targetElevation - this.elevation) * k;
+      this.targetAltitude = Math.min(this.maxAltitude, Math.max(this.minAltitude, this.targetAltitude));
+      this.altitude = Math.exp(Math.log(this.altitude) + (Math.log(this.targetAltitude) - Math.log(this.altitude)) * k);
+      dir = this.toScene(fromAngles(this.azimuth, this.elevation));
+      distanceKm = sun.data.radiusKm + this.altitude;
+      pivot = target.centerKm;
+      up = tangentTo(dir, target.normal);
+    }
+    // Si la dirección pasa por el «arriba», el del frame anterior.
+    if (Math.hypot(up.x, up.y, up.z) < 0.5) up = tangentTo(dir, this.last.up);
+
+    const t = this.trueCamera;
+    t.x = pivot.x + dir.x * distanceKm;
+    t.y = pivot.y + dir.y * distanceKm;
+    t.z = pivot.z + dir.z * distanceKm;
+    this.trueCameraValid = true;
+    Object.assign(this.last.pivot, pivot);
+    this.last.distanceKm = distanceKm;
+    Object.assign(this.last.dir, dir);
+    Object.assign(this.last.up, up);
+
+    // La escena solar: su cámara en el borde, en la dirección real desde el Sol (así el
+    // Sol-estrella y lo que quede del relevo caen donde deben).
+    const tl = Math.hypot(t.x, t.y, t.z) || 1;
+    const sd = rig.scale.localDistance(sun.data, Math.min(tl, HANDOFF_END_KM));
+    const s = sun.sceneD, p = rig.position;
+    p.x = s.x + (t.x / tl) * sd;
+    p.y = s.y + (t.y / tl) * sd;
+    p.z = s.z + (t.z / tl) * sd;
+    rig.clearance = sd;
+    Object.assign(rig.target, { x: p.x - dir.x * sd, y: p.y - dir.y * sd, z: p.z - dir.z * sd });
+    Object.assign(rig.up, up);
+  }
+
   private get minAltitude(): number {
+    if (this.cosmicTarget) return this.cosmicTarget.radiusKm * 0.3;
     return this.focus.landable ? MIN_GROUND_KM : this.focus.data.radiusKm * MIN_ALTITUDE_RADII;
   }
 
   private get maxAltitude(): number {
+    if (this.cosmicTarget) return COSMIC_TARGET_MAX_KM;
     return this.focus.parent === null ? COSMIC_MAX_KM : MAX_DISTANCE_KM;
   }
 
@@ -354,8 +541,11 @@ export class OrbitMode implements NavigationMode {
    * llegada, solo gira la cámara hasta allí.
    */
   focusOn(body: CelestialBody, rig: CameraRig, arrival?: Dir, distanceRadii?: number): void {
-    if (body === this.focus && !this.transition && !arrival) return;
+    if (body === this.focus && !this.transition && !arrival && !this.cosmicTarget) return;
     this.descent = null;
+    // Desde una galaxia el viaje partiría del borde del relevo: el Engine vuelve antes (§14.5).
+    this.cosmicTrip = null;
+    this.cosmicTarget = null;
     this.setFrame('scene');
     const p = rig.position;
     const dx = p.x - body.sceneD.x, dy = p.y - body.sceneD.y, dz = p.z - body.sceneD.z;
@@ -408,6 +598,7 @@ export class OrbitMode implements NavigationMode {
       const dx = e.clientX - this.lastPointer.x, dy = e.clientY - this.lastPointer.y;
       this.lastPointer = { x: e.clientX, y: e.clientY };
       this.dragDistance += Math.abs(dx) + Math.abs(dy);
+      if (this.cosmicTrip) return;
       if (this.dragDistance > 4) this.descent = null;
       if (this.dragging === 2) {
         this.targetHeading -= dx * 0.004;
@@ -429,6 +620,8 @@ export class OrbitMode implements NavigationMode {
     }, opts);
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
+      // En un viaje entre galaxias la rueda no hace nada (cortarlo dejaría la cámara a medio camino).
+      if (this.cosmicTrip) return;
       this.descent = null;
       // Fuera del sistema solar, el triple de rápido: hay 8 órdenes de magnitud hasta la galaxia.
       const rate = 1 + 2 * logStep(this.targetAltitude, HANDOFF_START_KM, 1e17);
@@ -438,6 +631,10 @@ export class OrbitMode implements NavigationMode {
   }
 
   update(rig: CameraRig, dt: number): void {
+    if (this.cosmicTrip || this.cosmicTarget) {
+      this.updateCosmic(rig, dt);
+      return;
+    }
     const body = this.focus;
     const r = body.data.radiusKm;
     // Bajada o subida con los botones: altitud en escala logarítmica, dirección y mirada
@@ -552,12 +749,20 @@ export class OrbitMode implements NavigationMode {
     // arrastre: al pasar al marco galáctico la imagen no da un giro de golpe.
     const w = body.parent ? 0 : logStep(distanceKm, UP_START_KM, UP_END_KM);
     if (w > 0) Object.assign(rig.up, rotateTowards(tangentTo(dir, { x: 0, y: 1, z: 0 }), tangentTo(dir, GALACTIC_NORTH), dir, w));
+    // De aquí parte un viaje cósmico.
+    const l = this.last;
+    l.pivot.x = this.trueCamera.x - dir.x * distanceKm;
+    l.pivot.y = this.trueCamera.y - dir.y * distanceKm;
+    l.pivot.z = this.trueCamera.z - dir.z * distanceKm;
+    l.distanceKm = distanceKm;
+    Object.assign(l.dir, dir);
+    Object.assign(l.up, rig.up);
   }
 
-  /** Orientación del marco → escena. */
+  /** Orientación del marco → escena. Alrededor de otra galaxia, el marco es el de su disco. */
   private frameQuaternion(frame: Frame, out: THREE.Quaternion): THREE.Quaternion {
     if (frame === 'body') return out.copy(this.focus.spinQuaternion);
-    if (frame === 'galaxy') return out.copy(GALAXY_Q);
+    if (frame === 'galaxy') return out.copy(this.cosmicTarget ? this.targetQ : GALAXY_Q);
     return out.identity();
   }
 
@@ -619,6 +824,11 @@ const normalize = (a: Dir): Dir => {
 function tangentTo(dir: Dir, v: Dir): Dir {
   const k = dot(v, dir);
   return normalize({ x: v.x - dir.x * k, y: v.y - dir.y * k, z: v.z - dir.z * k });
+}
+
+/** El «arriba» que pone la órbita del Sol a esa distancia: un viaje que vuelve a ella llega sin giro. */
+function sunUp(dir: Dir, distanceKm: number): Dir {
+  return rotateTowards(tangentTo(dir, { x: 0, y: 1, z: 0 }), tangentTo(dir, GALACTIC_NORTH), dir, logStep(distanceKm, UP_START_KM, UP_END_KM));
 }
 
 /** Gira `a` alrededor de `axis` (perpendicular a los dos) una fracción `t` del ángulo hasta `b`. */

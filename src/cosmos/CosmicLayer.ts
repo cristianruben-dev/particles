@@ -14,14 +14,17 @@
 import * as THREE from 'three/webgpu';
 import { float, max, min, mix, smoothstep, uniform, vec4 } from 'three/tsl';
 import type { Vec3d } from '../astro/frames';
+import { GALAXIES, GALAXY_IDS, galaxyBasis, galaxyCenterKm, type GalaxyId } from '../astro/galaxies';
 import { GALACTIC_CENTER_KM } from '../astro/galaxy';
-import { PC_KM } from '../astro/units';
+import { LY_KM, PC_KM } from '../astro/units';
 import { bvToRgb } from '../bodies/Starfield';
+import { logStep } from '../core/Handoff';
 import { aboveHorizon, horizon } from '../core/Horizon';
 import { pixelAngle, softDisc, type FloatNode, type Vec3Node } from '../particles/nodes';
 import { ParticleField, vec4Buffer } from '../particles/ParticleField';
 import type { ScaleSystem } from '../scale/ScaleSystem';
-import type { GalaxyResult } from './milkyWayModel';
+import type { WorkerRequest, WorkerResult } from './galaxy.worker';
+import { MILKY_WAY_LIGHT_PER_PARTICLE, type GalaxyResult } from './milkyWayModel';
 
 /** Radio de la cáscara (escena): por fuera de la escena solar entera (§14.4), dentro del plano lejano. */
 export const COSMIC_SKY_RADIUS = 5e9;
@@ -32,6 +35,8 @@ export const cosmicLook = {
   dust: uniform(0.2),
   /** De día se apaga como las estrellas (lo pone el Engine). */
   sky: uniform(1),
+  /** Exposición: baja junto a las galaxias pequeñas y brillantes (lo pone el Engine). */
+  exposure: uniform(1),
 };
 
 /** Diámetro mínimo de una partícula en pantalla (px). */
@@ -43,14 +48,13 @@ const MIN_PX = 1.4;
  */
 const MAX_PX = 7;
 const MAX_BOOST = 4;
-/** Radio del disco (años luz) para el LOD: partículas por píxel² del disco en pantalla. */
-const DISK_RADIUS_LY = 50_000;
+/** LOD: partículas por píxel² del disco en pantalla. */
 const PARTICLES_PER_PX2 = 1.5;
-const MIN_VISIBLE = 30_000;
 
-/** Partículas que genera el modelo (estrellas y polvo). */
+/** Partículas que genera el modelo de la Vía Láctea (estrellas y polvo). */
 const STAR_COUNT = 600_000;
 const DUST_COUNT = 160_000;
+const MILKY_WAY_RADIUS_LY = 50_000;
 
 /** Lo que sale de la cáscara para una partícula a `rel` años luz de la cámara. */
 interface ShellPlacement {
@@ -83,8 +87,8 @@ function shell(rel: Vec3Node, size: FloatNode): ShellPlacement {
 /** Como las estrellas: a ras de suelo, nada bajo el horizonte. */
 const skyVisible = (dir: Vec3Node) => mix(float(1), aboveHorizon(dir), horizon.amount.greaterThan(0).select(1, 0));
 
-/** La Vía Láctea vista desde fuera: estrellas (aditivas) y polvo (absorbe). */
-class MilkyWay {
+/** Una galaxia vista desde fuera: estrellas (aditivas) y polvo (absorbe). */
+class Galaxy {
   readonly stars: ParticleField;
   readonly dust: ParticleField;
   /** Centro de la galaxia respecto a la cámara (años luz). */
@@ -93,7 +97,11 @@ class MilkyWay {
   /** Con menos partículas dibujadas, cada una lleva más luz. */
   private readonly gain = uniform(1);
 
-  constructor(data: GalaxyResult) {
+  /**
+   * @param radiusLy radio del disco, para el LOD.
+   * @param minVisible partículas que se dibujan como mínimo (de lejos, un puñado basta).
+   */
+  constructor(data: GalaxyResult, private readonly radiusLy: number, private readonly minVisible: number) {
     this.stars = this.layer(data.stars.posSize, data.stars.color, 'stars');
     this.dust = this.layer(data.dust.posSize, data.dust.color, 'dust');
   }
@@ -110,7 +118,7 @@ class MilkyWay {
     m.scaleNode = s.scale;
     const k = s.dim.mul(s.near).mul(this.presence).mul(skyVisible(s.dir)).mul(cosmicLook.sky);
     if (kind === 'stars') {
-      m.colorNode = vec4(c.xyz.mul(k).mul(this.gain).mul(cosmicLook.galaxy), 1);
+      m.colorNode = vec4(c.xyz.mul(k).mul(this.gain).mul(cosmicLook.galaxy).mul(cosmicLook.exposure), 1);
       m.opacityNode = softDisc();
       field.object.renderOrder = -4;
     } else {
@@ -134,13 +142,17 @@ class MilkyWay {
     // LOD por densidad (§6.3): las partículas van en orden aleatorio, vale cualquier prefijo.
     const d = Math.hypot(centreLy.x, centreLy.y, centreLy.z);
     let fraction = 1;
-    if (d > DISK_RADIUS_LY) {
-      const radiusPx = DISK_RADIUS_LY / d / pixelAngle.value;
+    if (d > this.radiusLy) {
+      const radiusPx = this.radiusLy / d / pixelAngle.value;
       fraction = Math.min(1, (PARTICLES_PER_PX2 * Math.PI * radiusPx * radiusPx) / this.stars.count);
     }
-    this.stars.setVisibleFraction(fraction, MIN_VISIBLE);
-    this.dust.setVisibleFraction(fraction, MIN_VISIBLE / 4);
+    this.stars.setVisibleFraction(fraction, this.minVisible);
+    this.dust.setVisibleFraction(fraction, this.minVisible / 4);
     this.gain.value = this.stars.count / this.stars.object.count;
+  }
+
+  get drawn(): number {
+    return this.stars.object.visible ? this.stars.object.count + this.dust.object.count : 0;
   }
 }
 
@@ -182,13 +194,20 @@ class SunStar {
   }
 }
 
+/** El Sol-estrella se apaga desde aquí: de lejos marcaría un punto encima de la Vía Láctea. */
+const SUN_FADE_START_KM = 150_000 * LY_KM;
+const SUN_FADE_END_KM = 500_000 * LY_KM;
+
 export class CosmicLayer {
   readonly group = new THREE.Group();
   private readonly sun = new SunStar();
-  private milkyWay: MilkyWay | null = null;
+  private milkyWay: Galaxy | null = null;
+  private readonly galaxies = new Map<GalaxyId, { galaxy: Galaxy; centerKm: Vec3d }>();
   private loading: Promise<void> | null = null;
   private readonly tmp = { x: 0, y: 0, z: 0 };
   private readonly gcDir = { x: 1, y: 0, z: 0 };
+  /** Tiempo de generación en el worker (ms) de cada galaxia, para medirlo. */
+  readonly bakeMs: Partial<Record<GalaxyId, number>> = {};
 
   constructor(private readonly scale: ScaleSystem) {
     this.group.add(this.sun.field.object);
@@ -196,24 +215,47 @@ export class CosmicLayer {
 
   /** Partículas dibujadas (para el HUD). */
   get particleCount(): number {
-    const mw = this.milkyWay;
-    if (!mw?.stars.object.visible) return 0;
-    return mw.stars.object.count + mw.dust.object.count;
+    let n = this.milkyWay?.drawn ?? 0;
+    for (const { galaxy } of this.galaxies.values()) n += galaxy.drawn;
+    return n;
   }
 
-  /** Genera la galaxia en un worker (la primera vez que hace falta). */
+  /**
+   * Genera las galaxias en un worker (la primera vez que hace falta): la Vía Láctea primero
+   * y después las demás, una a una, según llegan.
+   */
   load(): Promise<void> {
-    this.loading ??= new Promise<GalaxyResult>((resolve, reject) => {
+    this.loading ??= new Promise<void>((resolve, reject) => {
       const worker = new Worker(new URL('./galaxy.worker.ts', import.meta.url), { type: 'module' });
-      worker.addEventListener('message', (e: MessageEvent<GalaxyResult>) => {
-        resolve(e.data);
-        worker.terminate();
+      const others = GALAXY_IDS.filter((id) => id !== 'milkyway');
+      const referenceLight = STAR_COUNT * MILKY_WAY_LIGHT_PER_PARTICLE;
+      worker.addEventListener('message', (e: MessageEvent<WorkerResult>) => {
+        const msg = e.data;
+        if (msg.kind === 'milkyway') {
+          this.bakeMs.milkyway = msg.ms;
+          this.milkyWay = new Galaxy(msg.result, MILKY_WAY_RADIUS_LY, 30_000);
+          this.group.add(this.milkyWay.stars.object, this.milkyWay.dust.object);
+          resolve();
+        } else {
+          const id = msg.id as GalaxyId, data = GALAXIES[id];
+          this.bakeMs[id] = msg.ms;
+          const galaxy = new Galaxy(msg.result, data.diameterLy / 2, 300);
+          this.galaxies.set(id, { galaxy, centerKm: galaxyCenterKm(data) });
+          this.group.add(galaxy.stars.object, galaxy.dust.object);
+          if (this.galaxies.size === others.length) worker.terminate();
+        }
       });
       worker.addEventListener('error', reject);
-      worker.postMessage({ stars: STAR_COUNT, dust: DUST_COUNT, seed: 20_261_028 });
-    }).then((data) => {
-      this.milkyWay = new MilkyWay(data);
-      this.group.add(this.milkyWay.stars.object, this.milkyWay.dust.object);
+      const send = (msg: WorkerRequest) => worker.postMessage(msg);
+      send({ kind: 'milkyway', request: { stars: STAR_COUNT, dust: DUST_COUNT, seed: 20_261_028 } });
+      others.forEach((id, i) => {
+        const data = GALAXIES[id];
+        send({
+          kind: 'galaxy',
+          id,
+          spec: { shape: data.shape, radiusLy: data.diameterLy / 2, count: data.particles, light: data.light * referenceLight, seed: 7_919 * (i + 1), basis: galaxyBasis(data) },
+        });
+      });
     });
     return this.loading;
   }
@@ -228,7 +270,8 @@ export class CosmicLayer {
     t.x = -cameraKm.x;
     t.y = -cameraKm.y;
     t.z = -cameraKm.z;
-    this.sun.update(t, 1 - solar);
+    const sunKm = Math.hypot(t.x, t.y, t.z);
+    this.sun.update(t, (1 - solar) * (1 - logStep(sunKm, SUN_FADE_START_KM, SUN_FADE_END_KM)));
     const c = GALACTIC_CENTER_KM;
     t.x = this.scale.cosmic(c.x - cameraKm.x);
     t.y = this.scale.cosmic(c.y - cameraKm.y);
@@ -236,6 +279,12 @@ export class CosmicLayer {
     const d = Math.hypot(t.x, t.y, t.z) || 1;
     Object.assign(this.gcDir, { x: t.x / d, y: t.y / d, z: t.z / d });
     this.milkyWay?.update(t, galaxy);
+    for (const { galaxy: g, centerKm } of this.galaxies.values()) {
+      t.x = this.scale.cosmic(centerKm.x - cameraKm.x);
+      t.y = this.scale.cosmic(centerKm.y - cameraKm.y);
+      t.z = this.scale.cosmic(centerKm.z - cameraKm.z);
+      g.update(t, galaxy);
+    }
   }
 
   /** Dirección del centro galáctico desde la cámara (unitaria, del último `update`). */

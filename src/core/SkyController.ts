@@ -107,8 +107,13 @@ export class SkyController {
    * eclíptico): con km verdaderos, no en escena, que en la escala comprimida tuerce las direcciones.
    */
   seenFrom(from: Vec3d, to: Vec3d): string | null {
+    return this.nameAt(eclipticToEquatorial({ x: to.x - from.x, y: to.y - from.y, z: to.z - from.z }));
+  }
+
+  /** Nombre de la constelación en una dirección ecuatorial J2000, o null. */
+  nameAt(equatorial: Vec3d): string | null {
     if (!this.data) return null;
-    const i = constellationAt(this.data, eclipticToEquatorial({ x: to.x - from.x, y: to.y - from.y, z: to.z - from.z }));
+    const i = constellationAt(this.data, equatorial);
     return i >= 0 ? this.data.constellations[i].name : null;
   }
 

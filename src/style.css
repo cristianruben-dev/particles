@@ -958,6 +958,59 @@ kbd {
   margin-left: 6px;
 }
 
+/* Galaxias (§14.5): un brillo alargado con el núcleo claro, según el tipo. */
+.ui-orb.galaxy {
+  background: none;
+  box-shadow: none;
+}
+
+.ui-orb.galaxy::before {
+  content: '';
+  position: absolute;
+  inset: -10% -40%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, #fff 0%, color-mix(in srgb, var(--c) 85%, white) 22%, color-mix(in srgb, var(--c) 55%, transparent) 55%, transparent 100%);
+  transform: rotate(-24deg) scaleY(0.5);
+}
+
+.ui-orb.galaxy.spiral::after {
+  content: '';
+  position: absolute;
+  inset: -10% -40%;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0 18%, color-mix(in srgb, var(--c) 70%, transparent) 25%, transparent 34% 68%, color-mix(in srgb, var(--c) 70%, transparent) 75%, transparent 84%);
+  mask: radial-gradient(closest-side, transparent 30%, #000 45%, #000 80%, transparent 100%);
+  -webkit-mask: radial-gradient(closest-side, transparent 30%, #000 45%, #000 80%, transparent 100%);
+  transform: rotate(-24deg) scaleY(0.5);
+  opacity: 0.8;
+}
+
+.ui-orb.galaxy.elliptical::before {
+  inset: -15%;
+  transform: scaleY(0.85);
+}
+
+.ui-orb.galaxy.irregular::before {
+  inset: -10% -25%;
+  transform: rotate(18deg) scaleY(0.7);
+  background: radial-gradient(closest-side at 40% 50%, #fff 0%, color-mix(in srgb, var(--c) 80%, white) 18%, color-mix(in srgb, var(--c) 45%, transparent) 50%, transparent 100%);
+}
+
+.ui-orb.galaxy.lenticular::before {
+  transform: rotate(-8deg) scaleY(0.4);
+}
+
+.ui-body-galaxies {
+  margin-left: 6px;
+}
+
+/* En el cosmos el reloj no mueve nada (la galaxia tarda más de 200 millones de años en girar). */
+#hud.cosmic .ui-time {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .ui-body:hover .ui-orb {
   transform: scale(1.15);
 }
@@ -1761,6 +1814,12 @@ kbd {
   cursor: default;
 }
 
+/* Las galaxias se pulsan para viajar a ellas. */
+#hud .label.marker.clickable {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 #hud .label::before {
   content: '';
   position: absolute;
@@ -1781,9 +1840,10 @@ kbd {
 
 /* ───────────── Pantallas medianas y móviles ───────────── */
 
-/* En una fila hacen falta ~1.600 px (tiempo 330 + navegador 680 + herramientas 525 + huecos):
-   por debajo, el navegador sube a su propia fila (con 1.240 la barra se salía por la derecha). */
-@media (max-width: 1640px) {
+/* En una fila hacen falta ~1.715 px (tiempo 330 + navegador 750, con «Galaxias», + herramientas
+   560, con «Constelaciones», + huecos): por debajo, el navegador sube a su propia fila (con el
+   corte en 1.700, a 1.705 la barra se salía 7 px por la derecha). */
+@media (max-width: 1740px) {
   .ui-bottom {
     grid-template-columns: 1fr max-content;
     grid-template-areas:
