@@ -36,6 +36,17 @@ export function positionRelativeToParent(body: BodyData, timeMs: number): Vec3d 
   return { x: 0, y: 0, z: 0 };
 }
 
+/**
+ * Posición relativa al padre para dibujar la órbita (`OrbitLines`): la de
+ * `positionRelativeToParent`, salvo la Tierra, que va con el baricentro Tierra-Luna. Su bamboleo
+ * de 4.700 km no se distingue a escala de órbita (la línea, además, se apaga junto al cuerpo) y
+ * la Luna de Meeus cuadruplicaba el coste de remuestrearla: 1.500 puntos, 3,2 ms.
+ */
+export function orbitPathPosition(body: BodyData, timeMs: number): Vec3d {
+  if (body.id === 'earth' && body.orbit) return heliocentricPosition(body.orbit, terrestrialTimeMs(timeMs));
+  return positionRelativeToParent(body, timeMs);
+}
+
 const TWO_PI = Math.PI * 2;
 
 /**

@@ -79,6 +79,9 @@ const HAZE_OVERLAP = 3;
 
 const DEG = Math.PI / 180;
 
+/** Por debajo de este radio en pantalla (px) el flujo no se distingue: se pausa. */
+const FLOW_MIN_PX = 30;
+
 /** Nitidez del borde entre bandas: más = bandas más rígidas y bordes más estrechos. */
 const BAND_EDGE = 10;
 
@@ -129,7 +132,7 @@ export class GasGiant extends BaseBody {
     if (p.rings) {
       const ringCount = full ? p.rings.count : previewCount(p.rings.count, p.count);
       const direction = Math.sign(this.data.pole.wRate) || 1;
-      rings = new Rings(tier, this.data, p.rings, ringCount, this.scale, this.sunDirection, this.objectScale, direction);
+      rings = new Rings(tier, this.data, p.rings, ringCount, this.scale, this.sunDirection, this.objectScale, direction, (ctx, radii) => this.inView(ctx, radii));
     }
 
     const { globe, haze } = this.createGlobe(tier, baked.directions, color, rings);
@@ -236,7 +239,7 @@ export class GasGiant extends BaseBody {
       tier.track(disturbance.resources.buffers, disturbance.resources.computes);
       center = center.add(disturbance.offsetNode());
       tier.updates.push((ctx) =>
-        disturbance.update(ctx.renderer, this.localPointerRay(ctx, field.object), ctx.dt, ctx.nowSeconds),
+        disturbance.update(ctx.renderer, this.localPointerRay(ctx, field.object), ctx.dt, ctx.nowSeconds, field.object.count),
       );
     }
 
@@ -334,6 +337,10 @@ export class GasGiant extends BaseBody {
     tier.track([], [step]);
 
     tier.updates.push((ctx: FrameContext) => {
+      // Sin verse (o con el planeta pequeño) el flujo se pausa entero, también el avance de los
+      // vórtices: si siguiera solo en la CPU, su centro se separaría de sus partículas. No vale un
+      // prefijo, como en el Sol: cada partícula lleva su color (la Gran Mancha Roja) y se quedaría atrás.
+      if (this.radiusPx < FLOW_MIN_PX || !this.inView(ctx, 1.05)) return;
       const t = Math.min(ctx.dt, 1 / 20) * gasLook.flow.value;
       dt.value = t;
       // Cada vórtice viaja con la banda de su latitud.

@@ -164,7 +164,8 @@ export class CloudLayer {
     this.group.rotation.y = ((days * DRIFT_TURNS_PER_DAY) % 1) * Math.PI * 2;
     if (this.turbulence && visible) {
       this.turbulence.time.value = (ctx.nowSeconds * TURBULENCE_SPEED) % 1000;
-      ctx.renderer.compute(this.turbulence.step);
+      // Sin estado: solo las que se dibujan (con la Tierra a 300 px, 22.000 de 320.000).
+      ctx.renderer.compute(this.turbulence.step, this.field.object.count);
     }
   }
 }

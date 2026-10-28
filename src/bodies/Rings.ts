@@ -76,6 +76,8 @@ export class Rings {
     objectScale: FloatNode,
     /** +1 si los anillos giran como el planeta en sentido directo, −1 si retrógrado. */
     direction: number,
+    /** ¿Se ve la esfera de tantos radios del planeta? (`BaseBody.inView`). */
+    private readonly inView: (ctx: FrameContext, radii: number) => boolean,
   ) {
     const gm = GM[data.id] ?? 1e7;
     this.innerOmega = Math.sqrt(gm / Math.pow(preset.bands[0].inner, 3));
@@ -144,16 +146,21 @@ export class Rings {
   }
 
   private update(ctx: FrameContext): void {
-    const simSeconds = ctx.dt * ctx.timeRate;
-    // Con el tiempo muy acelerado, el giro se limita: si no, los anillos se vuelven ruido.
-    this.dt.value = Math.min(simSeconds, MAX_STEP_RAD / this.innerOmega);
-    ctx.renderer.compute(this.step);
-
     const r = this.sceneRadius(ctx);
+    let outer = 1;
     this.preset.bands.forEach((band, i) => {
       this.bands[i].inner.value = ctx.scale.localDistance(this.data, band.inner) / r;
       this.bands[i].outer.value = ctx.scale.localDistance(this.data, band.outer) / r;
+      outer = Math.max(outer, this.bands[i].outer.value);
     });
+
+    const simSeconds = ctx.dt * ctx.timeRate;
+    // En pausa o sin verse no giran. Los ángulos son al azar: una partícula que se queda quieta
+    // mientras no se dibuja (fuera del prefijo o del campo de visión) no se distingue al volver.
+    if (simSeconds <= 0 || !this.inView(ctx, outer * 1.05)) return;
+    // Con el tiempo muy acelerado, el giro se limita: si no, los anillos se vuelven ruido.
+    this.dt.value = Math.min(simSeconds, MAX_STEP_RAD / this.innerOmega);
+    ctx.renderer.compute(this.step, this.field.object.count);
   }
 
   private sceneRadius(ctx: FrameContext): number {

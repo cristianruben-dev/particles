@@ -259,6 +259,18 @@ export abstract class BaseBody implements CelestialBody {
     };
   }
 
+  /**
+   * ¿Se ve este frame la esfera de `radii` radios alrededor del cuerpo (cuerpo dibujado y dentro
+   * del campo de visión)? Lo que no se ve no gasta pasadas compute (§6.3). Cada capa pasa lo que
+   * abarca: la superficie ~1, los anillos su borde exterior.
+   */
+  protected inView(ctx: FrameContext, radii: number): boolean {
+    if (!this.object3d.visible) return false;
+    viewSphere.center.copy(this.object3d.position);
+    viewSphere.radius = this.sceneRadius * radii;
+    return ctx.frustum.intersectsSphere(viewSphere);
+  }
+
   /** Ángulo de giro propio (rad) alrededor del eje local y, desde el nodo Q. */
   protected rotationAngle(timeMs: number): number {
     if (this.data.id === 'moon' && this.parent) {
@@ -307,3 +319,4 @@ export abstract class BaseBody implements CelestialBody {
 }
 
 const basis = new THREE.Matrix4();
+const viewSphere = new THREE.Sphere();

@@ -11,7 +11,7 @@ import { float, fract, instanceIndex, length, modelWorldMatrix, smoothstep, step
 import { handoff } from '../core/Handoff';
 import { horizonMask } from '../core/Horizon';
 import { COMET_ELEMENTS, anomalyAtDistance, cometElementsAt, cometOrbitPoint, cometPeriodDays, jdToMs, type CometElements } from '../astro/comets';
-import { positionRelativeToParent } from '../astro/ephemeris';
+import { orbitPathPosition } from '../astro/ephemeris';
 import { eclToScene, length3d } from '../astro/frames';
 import { projectedRadiusPx } from '../particles/LodManager';
 import { AU_KM } from '../astro/units';
@@ -25,6 +25,9 @@ export const orbitLook = {
 };
 
 const MS_PER_DAY = 86_400_000;
+
+/** Puntos de órbita que se remuestrean por frame como mucho: una de planeta o unas cuantas de lunas. */
+const RESAMPLE_POINTS = 1500;
 
 /** Semieje mayor aproximado (km), para saber cuánto ocupa la órbita en pantalla. */
 function semiMajorKm(body: CelestialBody): number {
@@ -87,32 +90,46 @@ class Orbit {
     material.opacityNode = softDisc();
   }
 
-  update(ctx: FrameContext): void {
+  /** Coloca la órbita y decide si se ve. Una órbita que no se ve no se remuestrea. */
+  update(ctx: FrameContext): boolean {
     const parent = this.body.parent!;
     ctx.origin.place(this.field.object, parent.sceneD);
-    const days = (ctx.timeMs - this.sampledAt) / MS_PER_DAY;
-    // Remuestrear cada 1/16 de vuelta (o tras un salto de fecha).
-    if (days < 0 || days > this.period / 16) this.sample(ctx.timeMs);
-    this.since.value = (ctx.timeMs - this.sampledAt) / MS_PER_DAY;
-
-    const b = this.body.sceneD, p = parent.sceneD;
-    this.bodyLocal.value.set(b.x - p.x, b.y - p.y, b.z - p.z);
-    this.bodyRadius.value = this.body.sceneRadius;
     const orbitPx = projectedRadiusPx(ctx.scale.localDistance(parent.data, this.semiMajorKm), this.field.object.position.length());
     this.fade.value = THREE.MathUtils.smoothstep(orbitPx, 25, 70);
     // Sin el cuerpo (la ISS antes de 1998 o con el reloj muy rápido), sin su órbita.
     this.field.object.visible = this.fade.value > 0 && this.body.object3d.visible;
+    if (!this.field.object.visible) return false;
+
+    this.since.value = (ctx.timeMs - this.sampledAt) / MS_PER_DAY;
+    const b = this.body.sceneD, p = parent.sceneD;
+    this.bodyLocal.value.set(b.x - p.x, b.y - p.y, b.z - p.z);
+    this.bodyRadius.value = this.body.sceneRadius;
+    return true;
   }
 
-  private sample(timeMs: number): void {
+  /**
+   * Retraso del muestreo en dieciseisavos de vuelta: por encima de 1 toca remuestrear; negativo
+   * (la fecha ha vuelto atrás) o por encima de 8 (media vuelta: un salto de fecha, o una órbita que
+   * vuelve a verse), ya, sin esperar turno.
+   */
+  staleness(timeMs: number): number {
+    return (timeMs - this.sampledAt) / MS_PER_DAY / (this.period / 16);
+  }
+
+  sample(timeMs: number): void {
     this.sampledAt = timeMs;
+    this.since.value = 0;
     const stepMs = (this.period * MS_PER_DAY) / this.count;
+    const data = this.data;
     for (let i = 0; i < this.count; i++) {
       // i = count − 1 es el presente; i = 0, una vuelta atrás.
-      const rel = positionRelativeToParent(this.body.data, timeMs - (this.count - 1 - i) * stepMs);
+      const rel = orbitPathPosition(this.body.data, timeMs - (this.count - 1 - i) * stepMs);
       const d = length3d(rel);
       const dir = eclToScene(rel);
-      this.data.set([dir.x / d, dir.y / d, dir.z / d, d], i * 4);
+      data[i * 4] = dir.x / d;
+      data[i * 4 + 1] = dir.y / d;
+      data[i * 4 + 2] = dir.z / d;
+      data[i * 4 + 3] = d;
     }
     this.buffer.value.needsUpdate = true;
   }
@@ -189,7 +206,8 @@ class CometOrbit {
     this.period.value = cometPeriodDays(el) ?? 0;
   }
 
-  update(ctx: FrameContext): void {
+  /** Coloca la órbita y dice si se ve. */
+  update(ctx: FrameContext): boolean {
     const parent = this.body.parent!;
     ctx.origin.place(this.field.object, parent.sceneD);
     const el = cometElementsAt(this.body.data.comet!, ctx.timeMs);
@@ -205,6 +223,7 @@ class CometOrbit {
     const orbitPx = projectedRadiusPx(ctx.scale.localDistance(parent.data, this.qKm * 3), this.field.object.position.length());
     this.fade.value = THREE.MathUtils.smoothstep(orbitPx, 25, 70);
     this.field.object.visible = this.fade.value > 0 && this.body.object3d.visible;
+    return this.field.object.visible;
   }
 }
 
@@ -223,6 +242,23 @@ export class OrbitLines {
   update(ctx: FrameContext): void {
     this.group.visible = this.visible;
     if (!this.visible) return;
-    for (const o of this.orbits) o.update(ctx);
+    const due: Orbit[] = [];
+    for (const o of this.orbits) {
+      if (!o.update(ctx) || !(o instanceof Orbit)) continue;
+      const s = o.staleness(ctx.timeMs);
+      if (s > 1 || s < 0) due.push(o);
+    }
+    if (!due.length) return;
+    // Remuestrear cuesta (a 1 año/s la Luna, Mercurio y la Tierra se rehacían cada frame: 3,7 ms):
+    // primero las más atrasadas y como mucho `RESAMPLE_POINTS` puntos por frame. La que espera
+    // sigue dibujándose bien (la estela avanza con `since`). Un salto de fecha no espera.
+    due.sort((a, b) => b.staleness(ctx.timeMs) - a.staleness(ctx.timeMs));
+    let budget = RESAMPLE_POINTS;
+    for (const o of due) {
+      const s = o.staleness(ctx.timeMs);
+      if (budget <= 0 && s >= 0 && s <= 8) continue;
+      o.sample(ctx.timeMs);
+      budget -= o.count;
+    }
   }
 }

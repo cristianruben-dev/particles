@@ -8,6 +8,7 @@
  */
 import * as THREE from 'three/webgpu';
 import type { HeightData } from './terrain';
+import type { DecodedImage, TerrainReply, TerrainRequest } from './terrain.worker';
 
 export interface TerrainSources {
   albedo?: string;
@@ -35,11 +36,17 @@ export class TerrainData {
 
   static async load(src: TerrainSources): Promise<TerrainData> {
     const leftLon = src.leftLon ?? -180;
-    const [height, albedo, night] = await Promise.all([
-      src.height ? loadHeight(src.height, src.heightSize, leftLon) : null,
-      src.albedo ? loadColor(src.albedo) : null,
-      src.night ? loadColor(src.night) : null,
-    ]);
+    // Descarga y decodificación en un worker: en el hilo principal bloqueaban 40–80 ms cada una.
+    const decoded = await decodeInWorker({ albedo: src.albedo, height: src.height, heightSize: src.heightSize, night: src.night });
+    let height: HeightData | null = null;
+    if (decoded.height) {
+      const { width, height: rows, data, half } = decoded.height;
+      // Con los bits float16, la CPU guarda los mismos que sube a la GPU y los decodifica con una
+      // tabla: la colisión lee exactamente el suelo que se dibuja, con la mitad de memoria.
+      height = half ? { width, height: rows, data, decode: halfDecodeTable(), leftLon } : { width, height: rows, data, leftLon };
+    }
+    const albedo = decoded.albedo ? colorTexture(decoded.albedo) : null;
+    const night = decoded.night ? colorTexture(decoded.night) : null;
     let heightTexture: THREE.DataTexture | null = null;
     if (height) {
       // r32float (o r16float con los bits del `.f16z`, la mitad de memoria) sin filtrar: la
@@ -59,17 +66,21 @@ export class TerrainData {
   }
 }
 
-/** Píxeles RGBA sin gestión de color (como el worker de horneado: mismos valores). */
-async function decode(url: string): Promise<{ width: number; height: number; data: Uint8ClampedArray }> {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${url}`);
-  const bitmap = await createImageBitmap(await response.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
-  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(bitmap, 0, 0);
-  const { data } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
-  bitmap.close();
-  return { width: canvas.width, height: canvas.height, data };
+/** Un worker por carga (son pocas: al enfocar un cuerpo con superficie); se cierra al acabar. */
+function decodeInWorker(request: TerrainRequest): Promise<Extract<TerrainReply, { ok: true }>> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./terrain.worker.ts', import.meta.url), { type: 'module' });
+    worker.addEventListener('message', (e: MessageEvent<TerrainReply>) => {
+      worker.terminate();
+      if (e.data.ok) resolve(e.data);
+      else reject(new Error(e.data.error));
+    });
+    worker.addEventListener('error', (e) => {
+      worker.terminate();
+      reject(new Error(e.message));
+    });
+    worker.postMessage(request);
+  });
 }
 
 /** Bits float16 → valor (los 65.536). */
@@ -82,35 +93,8 @@ function halfDecodeTable(): Float32Array {
   return halfTable;
 }
 
-async function loadHeight(url: string, size: TerrainSources['heightSize'], leftLon: number): Promise<HeightData> {
-  if (url.endsWith('.f16z')) {
-    // La CPU guarda los mismos bits que sube a la GPU y los decodifica con una tabla: la
-    // colisión lee exactamente el suelo que se dibuja, con la mitad de memoria que en float32.
-    if (!size) throw new Error(`Falta el tamaño de ${url}`);
-    const response = await fetch(url);
-    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}: ${url}`);
-    const buffer = await new Response(response.body.pipeThrough(new DecompressionStream('deflate'))).arrayBuffer();
-    const data = new Uint16Array(buffer);
-    if (data.length !== size.width * size.height) throw new Error(`Tamaño inesperado: ${url}`);
-    return { width: size.width, height: size.height, data, decode: halfDecodeTable(), leftLon };
-  }
-  if (url.endsWith('.u16')) {
-    if (!size) throw new Error(`Falta el tamaño de ${url}`);
-    const buffer = await (await fetch(url)).arrayBuffer();
-    const raw = new Uint16Array(buffer);
-    const data = new Float32Array(raw.length);
-    for (let i = 0; i < raw.length; i++) data[i] = raw[i] / 65535;
-    return { width: size.width, height: size.height, data, leftLon };
-  }
-  const img = await decode(url);
-  const data = new Float32Array(img.width * img.height);
-  for (let i = 0; i < data.length; i++) data[i] = img.data[i * 4] / 255;
-  return { width: img.width, height: img.height, data, leftLon };
-}
-
 /** Textura de color (sRGB) filtrada por hardware: en el color no importa la precisión fina. */
-async function loadColor(url: string): Promise<THREE.DataTexture> {
-  const img = await decode(url);
+function colorTexture(img: DecodedImage): THREE.DataTexture {
   const tex = new THREE.DataTexture(new Uint8Array(img.data.buffer), img.width, img.height, THREE.RGBAFormat, THREE.UnsignedByteType);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;

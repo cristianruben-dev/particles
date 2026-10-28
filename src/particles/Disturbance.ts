@@ -58,11 +58,13 @@ export class Disturbance {
   private readonly dt = uniform(1 / 60);
   private readonly step: THREE.ComputeNode;
   private activeUntil = 0;
+  /** Partículas que se simulan: el mayor prefijo dibujado desde que llegó el cursor. */
+  private extent = 0;
 
   /**
    * @param rest posición de reposo (espacio local) de la partícula `i`, leída de sus buffers.
    */
-  constructor(count: number, rest: (index: typeof instanceIndex) => Vec3Node, options: DisturbanceOptions = {}) {
+  constructor(private readonly count: number, rest: (index: typeof instanceIndex) => Vec3Node, options: DisturbanceOptions = {}) {
     this.offset = instancedArray(count, 'vec4');
     this.velocity = instancedArray(count, 'vec4');
 
@@ -115,8 +117,9 @@ export class Disturbance {
 
   /**
    * @param ray rayo del cursor en el espacio local de la capa, o null si no está encima.
+   * @param drawn partículas que dibuja la capa (prefijo, §6.3).
    */
-  update(renderer: THREE.WebGPURenderer, ray: LocalRay | null, dt: number, nowSeconds: number): void {
+  update(renderer: THREE.WebGPURenderer, ray: LocalRay | null, dt: number, nowSeconds: number, drawn = this.count): void {
     if (ray) {
       this.activeUntil = nowSeconds + SETTLE_SECONDS;
       this.rayOrigin.value.copy(ray.origin);
@@ -124,8 +127,15 @@ export class Disturbance {
       this.radius.value = ray.radius;
     }
     this.push.value = ray ? ray.gain : 0;
-    if (nowSeconds > this.activeUntil) return;
+    if (nowSeconds > this.activeUntil) {
+      // Ya asentadas (en 4 s el muelle se queda en 10⁻⁵ del empuje): se empieza de cero.
+      this.extent = 0;
+      return;
+    }
+    // Solo el prefijo dibujado (con la Tierra a 300 px, 82.000 de 1,2 millones). Las de fuera
+    // nunca se empujan, y las que salen del prefijo a mitad siguen dentro hasta asentarse.
+    this.extent = Math.min(this.count, Math.max(this.extent, drawn));
     this.dt.value = Math.min(dt, 1 / 30);
-    renderer.compute(this.step);
+    renderer.compute(this.step, this.extent);
   }
 }

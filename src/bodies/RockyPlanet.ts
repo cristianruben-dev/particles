@@ -168,8 +168,8 @@ export class RockyPlanet extends BaseBody {
       tier.fields.push({ field: clouds.field, scale: 1 });
       tier.updates.push((ctx) => {
         // La turbulencia solo se calcula si las nubes se ven y el planeta no es pequeño en pantalla.
-        clouds.update(ctx, tier.visible && this.cloudFade.value > 0.001 && this.radiusPx > 150);
-        clouds.disturbance?.update(ctx.renderer, this.localPointerRay(ctx, clouds.field.object), ctx.dt, ctx.nowSeconds);
+        clouds.update(ctx, tier.visible && this.cloudFade.value > 0.001 && this.radiusPx > 150 && this.inView(ctx, 1.1));
+        clouds.disturbance?.update(ctx.renderer, this.localPointerRay(ctx, clouds.field.object), ctx.dt, ctx.nowSeconds, clouds.field.object.count);
       });
     }
     return tier;
@@ -199,7 +199,7 @@ export class RockyPlanet extends BaseBody {
       tier.track(disturbance.resources.buffers, disturbance.resources.computes);
       center = center.add(disturbance.offsetNode());
       tier.updates.push((ctx) =>
-        disturbance.update(ctx.renderer, this.localPointerRay(ctx, field.object), ctx.dt, ctx.nowSeconds),
+        disturbance.update(ctx.renderer, this.localPointerRay(ctx, field.object), ctx.dt, ctx.nowSeconds, field.object.count),
       );
     }
 
@@ -330,12 +330,6 @@ export class RockyPlanet extends BaseBody {
     if (this.surface) {
       this.object3d.updateMatrixWorld(true);
       const cameraLocal = this.spin.worldToLocal(new THREE.Vector3());
-      // Frustum de la cámara: solo los cuatro planos laterales (cerca y lejos no importan).
-      const camera = ctx.camera;
-      frustumMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
-      frustum.setFromProjectionMatrix(frustumMatrix, camera.coordinateSystem);
-      frustum.planes[4].set(new THREE.Vector3(1, 0, 0), 1e30);
-      frustum.planes[5].set(new THREE.Vector3(1, 0, 0), 1e30);
       const sphere = new THREE.Sphere();
       this.surface.update(ctx.renderer, {
         cameraLocal,
@@ -346,7 +340,7 @@ export class RockyPlanet extends BaseBody {
           sphere.center.copy(center);
           this.spin.localToWorld(sphere.center);
           sphere.radius = radius * this.sceneRadius * 1.05;
-          return frustum.intersectsSphere(sphere);
+          return ctx.frustum.intersectsSphere(sphere);
         },
       });
     }
@@ -443,9 +437,6 @@ export class RockyPlanet extends BaseBody {
   }
 
 }
-
-const frustum = new THREE.Frustum();
-const frustumMatrix = new THREE.Matrix4();
 
 export function hashString(s: string): number {
   let h = 2166136261;

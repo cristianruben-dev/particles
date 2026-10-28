@@ -51,6 +51,8 @@ export class AsteroidBelt {
   /** Atenuación cuando la cámara está dentro del cinturón: si no, llena el cielo de puntos. */
   private readonly inside = uniform(1);
   private readonly radiusKm: number;
+  /** Afelio más lejano de la población (km): la esfera que la contiene. */
+  private readonly outerKm: number;
   private readonly step: THREE.ComputeNode;
   private lastTimeMs: number | null = null;
 
@@ -58,6 +60,7 @@ export class AsteroidBelt {
     const { count } = options;
     const { elements, anomaly } = sampleElements(options.population, count);
     this.radiusKm = { main: 2.7, trojans: 5.2, kuiper: 44 }[options.population] * AU_KM;
+    this.outerKm = { main: 4.6, trojans: 6.5, kuiper: 73 }[options.population] * AU_KM;
     // (anomalía media, a km, e, —) y (i, nodo, argumento del perihelio, brillo).
     const orbitA = instancedArray(anomaly, 'vec4');
     const orbitB = instancedArray(elements, 'vec4');
@@ -113,14 +116,21 @@ export class AsteroidBelt {
     const cameraToSun = this.object.position.length();
     const beltRadius = ctx.scale.localDistance(BODIES.sun, this.radiusKm);
     this.inside.value = 0.15 + 0.85 * THREE.MathUtils.smoothstep(cameraToSun, beltRadius * 0.9, beltRadius * 2.5);
+    if (ctx.timeMs === this.lastTimeMs) return;
+    // Fuera del sistema solar o del campo de visión no se calcula: el siguiente paso avanza todo
+    // lo pendiente de golpe, como tras un salto de fecha.
+    viewSphere.center.copy(this.object.position);
+    viewSphere.radius = ctx.scale.localDistance(BODIES.sun, this.outerKm);
+    if (!this.object.visible || !ctx.frustum.intersectsSphere(viewSphere)) return;
     // Paso de tiempo simulado; tras un salto de fecha se avanza todo de golpe.
     const elapsedMs = this.lastTimeMs === null ? ctx.timeMs - EPOCH_MS : ctx.timeMs - this.lastTimeMs;
     this.lastTimeMs = ctx.timeMs;
-    if (elapsedMs === 0) return;
     this.dt.value = elapsedMs / 1000;
     ctx.renderer.compute(this.step);
   }
 }
+
+const viewSphere = new THREE.Sphere();
 
 /** Época de las anomalías iniciales: J2000. */
 const EPOCH_MS = Date.UTC(2000, 0, 1, 12);

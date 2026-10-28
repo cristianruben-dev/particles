@@ -131,6 +131,10 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
     - **Cometas**: Halley, Encke y 67P con los elementos de cada aparición entre 1900 y 2100 (3, 61 y 28), generados desde Horizons; la órbita dibujada cambia con la aparición.
     - **Relieve de la Tierra**: ETOPO 2022 en float16, 8192×4096 (5 km por texel; antes 8 bits y 10 km), con la escala del globo: el relevo no salta (25 m de media).
     - Interfaz: con el navegador de cuerpos y la barra de herramientas en una fila hacen falta ~1.600 px; entre 1.240 y 1.640 la barra se salía por la derecha. El corte pasa a 1.640 px.
+15. [x] **Revisión de rendimiento** (ARQUITECTURA §6.3, §8, §12), medida con frames a mano (panel oculto, 1280×800, calidad alta):
+    - Las pasadas compute siguen al LOD: solo el prefijo dibujado y solo si lo suyo se ve. Con el cursor sobre la Tierra (300 px), de 2,3 millones de invocaciones por frame a 233.000.
+    - Órbitas: las ocultas no se remuestrean, y el resto, por turnos, hasta 1.500 puntos por frame. A 1 año/s, de 3,7 a 1,4 ms por frame; a 1 semana/s, de 0,8 a 0,17.
+    - Terreno decodificado en un worker: de bloqueos de 84, 64 y 36 ms al enfocar la Tierra a 5 ms como mucho. Comprobados los cuatro casos: `.f16z` (Tierra), `.u16` (Luna y Marte), altura en PNG (Mercurio) y sin mapa (Europa). Sin medir: la subida de las texturas a la GPU y la compilación al crearse la superficie.
 
 **Hecho cuando:** una persona que no conoce el proyecto lo abre, explora sin instrucciones y aterriza en Marte.
 - [~] El camino existe sin instrucciones: la pista de bienvenida explica arrastrar, rueda y clic; Marte está en el navegador de abajo; el botón **Aterrizar** del título baja a Valles Marineris, de día (verificado: 5 km sobre el suelo, superficie completa, 0 huecos, cañón y cielo de polvo a la vista). Falta probarlo con alguien de verdad.
@@ -164,7 +168,13 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 - Cometas: la coma y las colas son un modelo artístico con la actividad de JPL; los cometas débiles (Encke) apenas tienen cola. ~~Lejos de las apariciones con elementos propios el perihelio se desvía días~~ (corregido: todas las apariciones de 1900 a 2100). Fuera de ese intervalo, dos cuerpos desde la más cercana.
 - El sonido no se ha escuchado: está medido (niveles y estados), pero falta oírlo con altavoces y ajustar volúmenes y timbres de oído.
 - La bruma de los gigantes deja aún algún hueco oscuro muy de cerca (a menos de 0,4 radios de Júpiter).
-- Coste sin medir con la ventana delante: la bruma de los gigantes (dibujo translúcido encima del planeta), la turbulencia de las nubes (320k partículas por frame con la Tierra a más de 150 px) y los 32 huecos del ratón en el suelo (205k partículas mientras se mueven).
+- Coste sin medir con la ventana delante: la bruma de los gigantes (dibujo translúcido encima del planeta: ~7 capas sobre el disco, ~2,5 sombreadas) y los 32 huecos del ratón en el suelo (205k partículas mientras se mueven). La turbulencia de las nubes ya solo calcula las que se dibujan (22.000 de 320.000 con la Tierra a 300 px).
+- Detectados en la revisión de rendimiento (punto 15), sin hacer:
+  - El material de la superficie recalcula por fragmento lo constante por partícula: lee 4 buffers, multiplica vista × modelo y decodifica dos normales. Pasar `fine` y la vertical como `varying` es seguro; el resto, midiendo.
+  - Cada chunk es un draw (~7–10 µs de CPU cada uno).
+  - El calendario abierto bloquea 50–65 ms al rehacerse entero.
+  - Primer uso de cada pasada (el ratón, la superficie, una galaxia): 47 ms de compilación.
+  - Basura por frame (arrays y objetos temporales) y layout forzado (`offsetParent`, `getBoundingClientRect`).
 - El relieve de la Tierra son 17,5 MB que se descargan al enfocarla (también al arrancar, que empieza en la Tierra) y ocupa 64 MB en la GPU y 64 MB en la CPU (antes, 32 + 32).
 - Sin mirar a ojo: el antes y el después del mosaico y de los bordes entre niveles de la superficie (el arreglo es por construcción), y la órbita de un cometa justo al cambiar de aparición.
 

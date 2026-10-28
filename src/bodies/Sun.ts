@@ -110,8 +110,10 @@ export class Sun extends BaseBody {
     const field = new ParticleField(SURFACE_COUNT, 'solid', 0.75);
     tier.updates.push((ctx) => {
       this.animTime.value = (performance.now() / 1000) % 10_000;
-      ctx.renderer.compute(granulation);
-      disturbance.update(ctx.renderer, this.localPointerRay(ctx, field.object), ctx.dt, ctx.nowSeconds);
+      // Sin estado: solo las partículas que se dibujan (de lejos, 2.000 de 320.000) y si el Sol
+      // se ve. Las demás se calculan el frame en que entran, antes de dibujarse.
+      if (this.inView(ctx, 1.05)) ctx.renderer.compute(granulation, field.object.count);
+      disturbance.update(ctx.renderer, this.localPointerRay(ctx, field.object), ctx.dt, ctx.nowSeconds, field.object.count);
     });
     const material = field.material;
     const { scale, visibility } = ballSprite({

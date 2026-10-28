@@ -1,7 +1,7 @@
 /**
  * Contrato común de todos los cuerpos. Ver docs/ARQUITECTURA.md §8.
  */
-import type { Color, Object3D, PerspectiveCamera, Quaternion, Vector3, WebGPURenderer } from 'three/webgpu';
+import type { Color, Frustum, Object3D, PerspectiveCamera, Quaternion, Vector3, WebGPURenderer } from 'three/webgpu';
 import type { BodyData, BodyId } from '../astro/bodies';
 import type { Vec3d } from '../astro/frames';
 import type { FloatingOrigin } from '../core/FloatingOrigin';
@@ -22,8 +22,14 @@ export interface FrameContext {
   pointer: Vector3 | null;
   /** Reloj real en segundos (para animaciones y la perturbación). */
   nowSeconds: number;
-  /** Cámara (en el origen; para el frustum de la superficie). */
+  /** Cámara (en el origen). */
   camera: PerspectiveCamera;
+  /**
+   * Campo de visión de la cámara, en mundo, con solo los cuatro planos laterales (cerca y
+   * lejos no importan): la superficie descarta nodos con él y lo que no lo toca no gasta
+   * pasadas compute (§6.3).
+   */
+  frustum: Frustum;
   /** Otro cuerpo de la escena (para las sombras de eclipse). */
   body(id: BodyId): CelestialBody | undefined;
 }

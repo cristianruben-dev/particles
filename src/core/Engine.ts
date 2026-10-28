@@ -52,6 +52,9 @@ const NEAR_GROUND_RADII = 0.05;
 const BASE_FOV = 50;
 const REDUCED_MOTION = matchMedia('(prefers-reduced-motion: reduce)');
 
+/** Normal de un plano del frustum que deja pasar todo (con constante 10³⁰). */
+const ALWAYS_IN = new THREE.Vector3(1, 0, 0);
+
 /** Teclas del vuelo libre (las gestiona `FreeFlyMode`). */
 const FLY_KEYS = new Set(['w', 'a', 's', 'd', 'q', 'e', 'r', 'f', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright']);
 
@@ -181,6 +184,9 @@ export class Engine {
   /** Cursor sobre el canvas en coordenadas normalizadas, o null si está fuera. */
   private pointerNdc: THREE.Vector2 | null = null;
   private readonly pointerRaycaster = new THREE.Raycaster();
+  /** Campo de visión del frame (planos laterales), para `FrameContext.frustum`. */
+  private readonly frustum = new THREE.Frustum();
+  private readonly frustumMatrix = new THREE.Matrix4();
   /** Botones del ratón pulsados sobre el canvas (arrastrando, el cielo no se resalta). */
   private pointerButtons = 0;
   /**
@@ -873,7 +879,13 @@ export class Engine {
     this.updateHandoff();
 
     let pointer: THREE.Vector3 | null = null;
-    this.rig.camera.updateMatrixWorld();
+    const camera = this.rig.camera;
+    camera.updateMatrixWorld();
+    this.frustumMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this.frustum.setFromProjectionMatrix(this.frustumMatrix, camera.coordinateSystem);
+    // Cerca y lejos no cuentan (con la profundidad invertida, además, saldrían al revés).
+    this.frustum.planes[4].set(ALWAYS_IN, 1e30);
+    this.frustum.planes[5].set(ALWAYS_IN, 1e30);
     if (this.pointerNdc) {
       this.pointerRaycaster.setFromCamera(this.pointerNdc, this.rig.camera);
       pointer = this.pointerRaycaster.ray.direction;
@@ -888,7 +900,8 @@ export class Engine {
       renderer: this.renderer,
       pointer,
       nowSeconds: now / 1000,
-      camera: this.rig.camera,
+      camera,
+      frustum: this.frustum,
       body: (id) => this.bodyMap.get(id),
     };
     for (const body of this.bodies) body.update(ctx);
