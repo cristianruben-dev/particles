@@ -94,6 +94,36 @@ function aimAt(target: Vec3d, up: Vec3d, sx: number, sy: number): Vec3d {
   return aim;
 }
 
+/**
+ * Mirada y «arriba» exactos para que `target` quede desplazada (sx, sy) en el plano tangente,
+ * con el norte (`north`) arriba en la propia estrella: la base de la estrella (derecha, arriba,
+ * ella) girada lo justo para llevar (sx, sy, 1) al centro. Sin iterar, también junto al polo
+ * (donde `aimAt`, que pide el norte arriba en la mirada, no converge).
+ */
+function frameAt(target: Vec3d, north: Vec3d, sx: number, sy: number): { aim: Vec3d; up: Vec3d } {
+  const k = target.x * north.x + target.y * north.y + target.z * north.z;
+  let u = { x: north.x - target.x * k, y: north.y - target.y * k, z: north.z - target.z * k };
+  let ul = Math.hypot(u.x, u.y, u.z);
+  // En el polo, cualquier «arriba».
+  if (ul < 1e-6) {
+    u = Math.abs(target.y) < 0.9 ? { x: -target.x * target.y, y: 1 - target.y * target.y, z: -target.z * target.y } : { x: 1 - target.x * target.x, y: -target.x * target.y, z: -target.x * target.z };
+    ul = Math.hypot(u.x, u.y, u.z);
+  }
+  u = { x: u.x / ul, y: u.y / ul, z: u.z / ul };
+  const r = { x: target.y * u.z - target.z * u.y, y: target.z * u.x - target.x * u.z, z: target.x * u.y - target.y * u.x };
+  const world = (a: number, b: number, c: number) => ({ x: r.x * a + u.x * b + target.x * c, y: r.y * a + u.y * b + target.y * c, z: r.z * a + u.z * b + target.z * c });
+  // Giro mínimo que lleva d = (sx, sy, 1)/|…| al eje z: alrededor de d × z.
+  const l = Math.hypot(sx, sy, 1), dx = sx / l, dy = sy / l, dz = 1 / l, s = Math.hypot(dx, dy);
+  if (s < 1e-9) return { aim: target, up: u };
+  const ax = dy / s, ay = -dx / s, c = dz;
+  // Rodrigues con eje (ax, ay, 0): rot(v) = v·c + (eje × v)·s + eje·(eje·v)·(1 − c).
+  const rot = (vx: number, vy: number, vz: number): [number, number, number] => {
+    const d = ax * vx + ay * vy;
+    return [vx * c + ay * vz * s + ax * d * (1 - c), vy * c - ax * vz * s + ay * d * (1 - c), vz * c + (ax * vy - ay * vx) * s];
+  };
+  return { aim: world(...rot(0, 0, 1)), up: world(...rot(0, 1, 0)) };
+}
+
 /** …y de vuelta, el sistema solar entero antes de viajar a un cuerpo. */
 const SOLAR_RETURN_KM = 600 * AU_KM;
 
@@ -157,7 +187,7 @@ export class Engine {
    * Constelación encuadrada (§15.3): el campo de visión que pide y las interacciones de la
    * órbita al encuadrarla (si cambian, el usuario ha movido la cámara y se suelta).
    */
-  private skyFrame: { fov: number; interactions: number; ground: boolean } | null = null;
+  private skyFrame: { index: number; fov: number; interactions: number; ground: boolean; sx: number; sy: number } | null = null;
   /** Campo de visión sin el warp: el base o el de la constelación encuadrada, con suavizado. */
   private skyFov = BASE_FOV;
   /** Sonido ambiente (§13): activado salvo que se apagara en otra visita. */
@@ -614,16 +644,16 @@ export class Engine {
     const tanV = Math.tan((fov * DEG) / 2);
     const ox = ((free.x + free.w / 2) / W) * 2 - 1, oy = 1 - ((free.y + free.h / 2) / H) * 2;
     const ground = this.orbit.groundLooking;
-    const up = ground ? this.reference.sky.up : CELESTIAL_NORTH;
-    const aim = aimAt(this.sky.direction(i), up, ox * tanV * aspect, oy * tanV);
+    const sx = ox * tanV * aspect, sy = oy * tanV;
     if (ground) {
-      const result = this.orbit.lookFromGround(aim);
+      const result = this.orbit.lookFromGround(aimAt(this.sky.direction(i), this.reference.sky.up, sx, sy));
       if (result === 'below') this.hud.toasts.show(`${c.name} está ahora bajo el horizonte`, 'constellation', 3.2);
       if (result !== 'ok') return;
     } else {
+      const { aim, up } = frameAt(this.sky.direction(i), CELESTIAL_NORTH, sx, sy);
       this.orbit.skyLookAt(aim, up);
     }
-    this.skyFrame = { fov, interactions: this.orbit.interactions, ground };
+    this.skyFrame = { index: i, fov, interactions: this.orbit.interactions, ground, sx, sy };
     this.hud.setSkyFocus(true);
     this.hud.coach.dismiss();
   }
@@ -833,6 +863,11 @@ export class Engine {
     // El encuadre de una constelación se suelta al mover la cámara (o al viajar, volar o salir).
     const sf = this.skyFrame;
     if (sf && (this.flying || this.orbit.interactions !== sf.interactions || (!sf.ground && !this.orbit.skyLooking) || this.cameraSunKm > STARS_FADE_START_KM)) this.releaseSkyFrame();
+    // A ras de suelo el cielo gira con el reloj: la mirada la sigue (si se pone, se suelta).
+    else if (sf?.ground && this.orbit.lookFromGround(aimAt(this.sky.direction(sf.index), this.reference.sky.up, sf.sx, sf.sy)) === 'below') {
+      this.hud.toasts.show(`${this.sky.data!.constellations[sf.index].name} se ha puesto`, 'constellation', 3.2);
+      this.releaseSkyFrame();
+    }
     this.rig.update(dt);
     this.updateWarp(dt);
     this.updateHandoff();

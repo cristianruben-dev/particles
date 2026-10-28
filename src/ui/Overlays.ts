@@ -105,7 +105,7 @@ const SHORTCUTS: [string, [string, string][]][] = [
     ['Botón derecho · Mayús + arrastrar', 'Mirar alrededor'],
     ['Rueda', 'Acercarse y alejarse, hasta el suelo'],
     ['Clic', 'Viajar al cuerpo o al nombre pulsado'],
-    ['Clic en el cielo', 'Ficha de la constelación'],
+    ['Clic en el cielo', 'Encuadrar la constelación y abrir su ficha'],
   ]],
   ['Teclado', [
     ['0 – 9', 'Sol y planetas'],

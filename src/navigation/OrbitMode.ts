@@ -149,7 +149,21 @@ export class OrbitMode implements NavigationMode {
   } | null = null;
 
   /** Mirada al cielo (§15.3): hacia dónde, con qué «arriba», si está pedida y su progreso (0–1). */
-  private readonly sky = { aim: { x: 0, y: 0, z: -1 } as Dir, up: { x: 0, y: 1, z: 0 } as Dir, on: false, t: 0 };
+  private readonly sky = {
+    aim: { x: 0, y: 0, z: -1 } as Dir,
+    up: { x: 0, y: 1, z: 0 } as Dir,
+    on: false,
+    t: 0,
+    /** Cambio de una constelación a otra (0–1) desde la mirada y el «arriba» de entonces. */
+    swap: 1,
+    /** Lo que dura ese cambio: más cuanto más gira (de un polo al otro, ~2,6 s). */
+    swapSeconds: 1,
+    fromAim: { x: 0, y: 0, z: -1 } as Dir,
+    fromUp: { x: 0, y: 1, z: 0 } as Dir,
+    /** Lo último que se aplicó. */
+    view: { x: 0, y: 0, z: -1 } as Dir,
+    viewUp: { x: 0, y: 1, z: 0 } as Dir,
+  };
   /** Cambia con cada arrastre o golpe de rueda: el motor suelta entonces el encuadre del cielo. */
   interactions = 0;
   private dragging: 0 | 1 | 2 = 0;
@@ -318,9 +332,15 @@ export class OrbitMode implements NavigationMode {
   skyLookAt(aim: Dir, up: Dir): void {
     if (this.transition) return;
     this.descent = null;
-    this.sky.aim = aim;
-    this.sky.up = up;
-    this.sky.on = true;
+    const sky = this.sky;
+    // Ya mirando al cielo: de la mirada actual a la nueva, sin saltos.
+    sky.swap = sky.t > 0 ? 0 : 1;
+    Object.assign(sky.fromAim, sky.view);
+    Object.assign(sky.fromUp, sky.viewUp);
+    sky.swapSeconds = 1 + (1.6 * Math.acos(Math.max(-1, Math.min(1, dot(sky.view, aim))))) / Math.PI;
+    sky.aim = aim;
+    sky.up = up;
+    sky.on = true;
   }
 
   releaseSky(): void {
@@ -331,19 +351,27 @@ export class OrbitMode implements NavigationMode {
     return this.sky.on;
   }
 
-  /** Mezcla la mirada al cielo con la de la órbita (`sky.t`, con su curva). */
+  /**
+   * Mezcla la mirada al cielo con la de la órbita (`sky.t`, con su curva). Las direcciones giran
+   * alrededor de un eje (también si la constelación está justo detrás) y el «arriba», alrededor
+   * de la mirada (`turnUp`), sin pasar por cero aunque el de la órbita y el pedido apunten casi
+   * al revés. De una constelación a otra, lo pedido gira desde lo anterior (`sky.swap`).
+   */
   private applySky(rig: CameraRig): void {
     const e = easeInOut(this.sky.t);
     if (e <= 0) return;
+    const sky = this.sky;
+    const s = easeInOut(sky.swap);
+    const aim = s < 1 ? turn(sky.fromAim, sky.aim, s) : sky.aim;
+    const up = s < 1 ? turnUp(aim, sky.fromUp, sky.up, s) : sky.up;
     const p = rig.position, tg = rig.target;
     const dx = tg.x - p.x, dy = tg.y - p.y, dz = tg.z - p.z;
     const reach = Math.hypot(dx, dy, dz) || 1;
-    const v = slerp({ x: dx / reach, y: dy / reach, z: dz / reach }, this.sky.aim, e);
+    const v = turn({ x: dx / reach, y: dy / reach, z: dz / reach }, aim, e);
     Object.assign(rig.target, { x: p.x + v.x * reach, y: p.y + v.y * reach, z: p.z + v.z * reach });
-    // Mirando casi al polo, el norte no da un «arriba»: se queda el de la órbita.
-    if (Math.abs(dot(v, this.sky.up)) > 0.995) return;
-    const up0 = tangentTo(v, rig.up), up1 = tangentTo(v, this.sky.up);
-    Object.assign(rig.up, normalize({ x: up0.x + (up1.x - up0.x) * e, y: up0.y + (up1.y - up0.y) * e, z: up0.z + (up1.z - up0.z) * e }));
+    Object.assign(rig.up, turnUp(v, rig.up, up, e));
+    Object.assign(sky.view, v);
+    Object.assign(sky.viewUp, rig.up);
   }
 
   /**
@@ -657,6 +685,7 @@ export class OrbitMode implements NavigationMode {
   update(rig: CameraRig, dt: number): void {
     // La mirada al cielo entra y sale en 1,6 s (con la curva de `applySky`).
     this.sky.t = Math.min(1, Math.max(0, this.sky.t + (this.sky.on ? dt : -dt) / 1.6));
+    this.sky.swap = Math.min(1, this.sky.swap + dt / this.sky.swapSeconds);
     if (this.cosmicTrip || this.cosmicTarget) {
       this.updateCosmic(rig, dt);
       return;
@@ -864,6 +893,33 @@ function rotateTowards(a: Dir, b: Dir, axis: Dir, t: number): Dir {
   const angle = Math.atan2(dot(axis, cross(a, b)), dot(a, b)) * t;
   const c = Math.cos(angle), s = Math.sin(angle), ax = cross(axis, a);
   return { x: a.x * c + ax.x * s, y: a.y * c + ax.y * s, z: a.z * c + ax.z * s };
+}
+
+/** Gira `a` hacia `b` (unitarias) una fracción `t` del ángulo; si son opuestas, por un eje cualquiera. */
+function turn(a: Dir, b: Dir, t: number): Dir {
+  let axis = cross(a, b);
+  if (Math.hypot(axis.x, axis.y, axis.z) < 1e-6) axis = cross(a, Math.abs(a.y) < 0.9 ? { x: 0, y: 1, z: 0 } : { x: 1, y: 0, z: 0 });
+  axis = normalize(axis);
+  const angle = Math.atan2(dot(axis, cross(a, b)), dot(a, b)) * t;
+  const side = cross(axis, a), c = Math.cos(angle), s = Math.sin(angle);
+  return normalize({ x: a.x * c + side.x * s, y: a.y * c + side.y * s, z: a.z * c + side.z * s });
+}
+
+const smooth = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * «Arriba» para la mirada `v`: el de `a` girado hacia el de `b` una fracción `t`. Mirando casi
+ * hacia `a` (o `b`), ese no da arriba y manda el otro, con un paso suave hasta ahí.
+ */
+function turnUp(v: Dir, a: Dir, b: Dir, t: number): Dir {
+  const ka = Math.abs(dot(v, a)), kb = Math.abs(dot(v, b));
+  if (ka > 0.995) return tangentTo(v, b);
+  if (kb > 0.995) return tangentTo(v, a);
+  const w = Math.max(t, smooth(0.97, 0.995, ka)) * (1 - smooth(0.97, 0.995, kb));
+  return rotateTowards(tangentTo(v, a), tangentTo(v, b), v, w);
 }
 
 /** Interpolación esférica entre direcciones unitarias. */
