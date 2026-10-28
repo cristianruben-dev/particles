@@ -14,6 +14,8 @@ export interface TitleState {
   /** Rótulo de la altitud («Altitud»; en los cometas, «Al núcleo»). */
   altitudeLabel: string;
   sunDistanceKm: number;
+  /** Segunda cifra con otro rótulo (las galaxias: «De la Tierra»). */
+  second?: { label: string; km: number };
   /** Velocidad en vuelo libre (km/s), o null en órbita. */
   speedKmS: number | null;
   landable: boolean;
@@ -92,6 +94,9 @@ export class FocusTitle {
     if (s.speedKmS !== null) {
       setText(this.second[0], 'Velocidad');
       setQuantity(this.second, speedParts(s.speedKmS));
+    } else if (s.second) {
+      setText(this.second[0], s.second.label);
+      setQuantity(this.second, distanceParts(s.second.km));
     } else {
       setText(this.second[0], s.id === 'sun' ? 'Radio' : 'Del Sol');
       setQuantity(this.second, distanceParts(s.sunDistanceKm));

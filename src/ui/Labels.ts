@@ -42,9 +42,8 @@ export class Labels {
     // Discos en pantalla de los cuerpos grandes: tapan las etiquetas de lo que hay detrás.
     const discs: { x: number; y: number; r: number; distance: number }[] = [];
     for (const body of this.ordered) {
-      if (body.screenRadiusPx < 3) continue;
+      if (body.screenRadiusPx < 3 || behind(body.object3d.position, camera, this.v)) continue;
       this.v.copy(body.object3d.position).project(camera);
-      if (this.v.z >= 1) continue;
       discs.push({
         x: (this.v.x * 0.5 + 0.5) * width,
         y: (-this.v.y * 0.5 + 0.5) * height,
@@ -60,8 +59,9 @@ export class Labels {
       let x = 0, y = 0;
       if (show) {
         // La cámara está en el origen: la posición del objeto ya es relativa a ella.
+        show = !behind(body.object3d.position, camera, this.v);
         this.v.copy(body.object3d.position).project(camera);
-        show = this.v.z < 1 && Math.abs(this.v.x) < 1.05 && Math.abs(this.v.y) < 1.05;
+        show &&= Math.abs(this.v.x) < 1.05 && Math.abs(this.v.y) < 1.05;
         x = (this.v.x * 0.5 + 0.5) * width;
         y = (-this.v.y * 0.5 + 0.5) * height;
         if (show && placed.some((p) => Math.abs(p.x - x) < MIN_GAP_PX * 3 && Math.abs(p.y - y) < MIN_GAP_PX)) show = false;
@@ -78,6 +78,14 @@ export class Labels {
   }
 }
 
+/**
+ * ¿Queda detrás de la cámara? Con la profundidad invertida, la z proyectada no lo dice (lo de
+ * detrás salía reflejado): se mira en el espacio de la cámara. `tmp` se reutiliza.
+ */
+function behind(position: THREE.Vector3, camera: THREE.Camera, tmp: THREE.Vector3): boolean {
+  return tmp.copy(position).transformDirection(camera.matrixWorldInverse).z >= 0;
+}
+
 /** Un nombre de la capa cósmica (§14): en una dirección desde la cámara, sin cuerpo detrás. */
 export interface Marker {
   text: string;
@@ -85,12 +93,18 @@ export interface Marker {
   /** Dirección desde la cámara (unitaria, ejes de escena). */
   dir: { x: number; y: number; z: number };
   show: boolean;
+  /** Clave estable (para reutilizar el elemento) y, si se puede pulsar, qué hace. */
+  key: string;
+  onClick?: () => void;
 }
 
-/** Nombres de la capa cósmica: dónde está el Sol, el centro galáctico… (de momento no se pulsan). */
+/**
+ * Nombres de la capa cósmica: dónde está el Sol, el centro galáctico, las galaxias (que se
+ * pulsan para viajar). Van por orden de importancia: los que caen encima de otro se ocultan.
+ */
 export class MarkerLabels {
   private readonly layer: HTMLElement;
-  private readonly elements: HTMLElement[] = [];
+  private readonly elements = new Map<string, { el: HTMLElement; click: { fn?: () => void } }>();
   private readonly v = new THREE.Vector3();
 
   constructor(root: HTMLElement) {
@@ -100,24 +114,39 @@ export class MarkerLabels {
   }
 
   update(camera: THREE.PerspectiveCamera, width: number, height: number, markers: readonly Marker[]): void {
-    markers.forEach((m, i) => {
-      let el = this.elements[i];
-      if (!el) {
-        el = document.createElement('span');
-        el.className = 'label marker';
+    const placed: { x: number; y: number }[] = [];
+    const seen = new Set<string>();
+    for (const m of markers) {
+      seen.add(m.key);
+      let entry = this.elements.get(m.key);
+      if (!entry) {
+        const el = document.createElement(m.onClick ? 'button' : 'span');
+        el.className = m.onClick ? 'label marker clickable' : 'label marker';
+        const click: { fn?: () => void } = {};
+        el.addEventListener('click', () => click.fn?.());
         this.layer.append(el);
-        this.elements[i] = el;
+        entry = { el, click };
+        this.elements.set(m.key, entry);
       }
+      const el = entry.el;
+      entry.click.fn = m.onClick;
       if (el.textContent !== m.text) el.textContent = m.text;
       el.style.setProperty('--dot', m.color);
       let show = m.show;
       if (show) {
+        show = !behind(this.v.set(m.dir.x, m.dir.y, m.dir.z), camera, this.v);
         // La cámara está en el origen: basta un punto en esa dirección.
         this.v.set(m.dir.x, m.dir.y, m.dir.z).multiplyScalar(1e6).project(camera);
-        show = this.v.z < 1 && Math.abs(this.v.x) < 1.05 && Math.abs(this.v.y) < 1.05;
-        if (show) el.style.transform = `translate(${((this.v.x * 0.5 + 0.5) * width + 6).toFixed(1)}px, ${((-this.v.y * 0.5 + 0.5) * height - 7).toFixed(1)}px)`;
+        show &&= Math.abs(this.v.x) < 1.05 && Math.abs(this.v.y) < 1.05;
+        const x = (this.v.x * 0.5 + 0.5) * width, y = (-this.v.y * 0.5 + 0.5) * height;
+        if (show && placed.some((p) => Math.abs(p.x - x) < MIN_GAP_PX * 3 && Math.abs(p.y - y) < MIN_GAP_PX)) show = false;
+        if (show) {
+          placed.push({ x, y });
+          el.style.transform = `translate(${(x + 6).toFixed(1)}px, ${(y - 7).toFixed(1)}px)`;
+        }
       }
       el.hidden = !show;
-    });
+    }
+    for (const [key, { el }] of this.elements) if (!seen.has(key)) el.hidden = true;
   }
 }

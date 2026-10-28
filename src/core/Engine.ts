@@ -9,8 +9,9 @@ import { findShadowEvents } from '../astro/eclipses';
 import { FACTS, type LandingSite } from '../astro/facts';
 import { refreshIssTle } from '../astro/iss';
 import { eclToScene, vec3d } from '../astro/frames';
-import { GALACTIC_CENTER_DIR, GALACTIC_NORTH } from '../astro/galaxy';
-import { AU_KM } from '../astro/units';
+import { GALAXIES, GALAXY_IDS, galaxyBasis, galaxyCenterKm, type GalaxyId } from '../astro/galaxies';
+import { GALACTIC_CENTER_DIR, GALACTIC_CENTER_KM, GALACTIC_NORTH } from '../astro/galaxy';
+import { AU_KM, LY_KM } from '../astro/units';
 import { Soundscape } from '../audio/Soundscape';
 import { AsteroidBelt } from '../bodies/AsteroidBelt';
 import type { CelestialBody, FrameContext } from '../bodies/CelestialBody';
@@ -21,11 +22,11 @@ import { config } from '../config';
 import { CosmicLayer, cosmicLook } from '../cosmos/CosmicLayer';
 import { CameraRig } from '../navigation/CameraRig';
 import { FreeFlyMode } from '../navigation/FreeFlyMode';
-import { OrbitMode } from '../navigation/OrbitMode';
+import { OrbitMode, type CosmicDestination } from '../navigation/OrbitMode';
 import { pickBody } from '../navigation/picking';
 import { disturbanceLook } from '../particles/Disturbance';
 import { particleLook } from '../particles/LodManager';
-import { updatePixelAngle } from '../particles/nodes';
+import { pixelAngle, updatePixelAngle } from '../particles/nodes';
 import type { ParticleField } from '../particles/ParticleField';
 import { createPipeline, warpLook, type BloomControls } from '../postfx/Pipeline';
 import { ScaleSystem } from '../scale/ScaleSystem';
@@ -33,7 +34,7 @@ import { surfaceBudget } from '../surface/Surface';
 import { createDebugGui } from '../ui/DebugGui';
 import type { PerihelionEvent } from '../ui/EventsPanel';
 import { Hud } from '../ui/Hud';
-import { Labels, MarkerLabels } from '../ui/Labels';
+import { Labels, MarkerLabels, type Marker } from '../ui/Labels';
 import { FloatingOrigin } from './FloatingOrigin';
 import { HANDOFF_START_KM, STARS_FADE_END_KM, STARS_FADE_START_KM, handoff, logStep, solarPresence } from './Handoff';
 import { horizon, horizonBackground } from './Horizon';
@@ -68,6 +69,9 @@ const GALAXY_VIEW_DIR = (() => {
 /** …y de vuelta, el sistema solar entero antes de viajar a un cuerpo. */
 const SOLAR_RETURN_KM = 600 * AU_KM;
 
+/** Nombres de las galaxias por importancia: las grandes antes que sus satélites. */
+const MARKER_ORDER = GALAXY_IDS.filter((id) => id !== 'milkyway').sort((a, b) => Number(!!GALAXIES[a].parent) - Number(!!GALAXIES[b].parent));
+
 export class Engine {
   readonly scene = new THREE.Scene();
   readonly clock = new SimClock();
@@ -94,8 +98,11 @@ export class Engine {
   private pendingFocus: (() => void) | null = null;
   /** «Vía Láctea» pulsado lejos del Sol: primero el viaje al Sol. */
   private pendingGalaxy = false;
+  /** Una galaxia elegida desde un planeta: primero el viaje al Sol. */
+  private pendingGalaxyId: GalaxyId | null = null;
   /** Capa cósmica (§14) y la cámara respecto al Sol en km verdaderos. */
   readonly cosmic = new CosmicLayer(this.scale);
+  private readonly galaxyCenters = Object.fromEntries(GALAXY_IDS.map((id) => [id, galaxyCenterKm(GALAXIES[id])])) as Record<GalaxyId, { x: number; y: number; z: number }>;
   private readonly cameraKm = vec3d();
   private cameraSunKm = 0;
   /** Presencia del sistema solar en el relevo (1 → 0). */
@@ -174,6 +181,8 @@ export class Engine {
         { id: 'sound', label: 'Sonido ambiente', key: 'M', get: () => this.sound.enabled, set: (on) => this.setSound(on) },
       ],
       onSelectBody: (id) => this.focus(this.byId(id)!),
+      onSelectGalaxy: (id) => this.focusGalaxy(id),
+      onSolarSystem: () => this.leaveCosmos(() => undefined),
       events: {
         shadows: (group, from, direction) => findShadowEvents(group, from, direction, group === 'jupiter' ? 6 : 4),
         perihelia: (from, direction) => this.perihelia(from, direction),
@@ -244,14 +253,101 @@ export class Engine {
    */
   private leaveCosmos(then: () => void): boolean {
     this.pendingGalaxy = false;
-    if (this.cameraSunKm <= HANDOFF_START_KM) {
+    this.pendingGalaxyId = null;
+    if (!this.inCosmos) {
       this.pendingFocus = null;
       return false;
     }
     if (this.flying) this.exitFly();
     this.pendingFocus = then;
-    this.orbit.zoomTo(SOLAR_RETURN_KM);
+    // Desde otra galaxia, un viaje cósmico de vuelta; desde la Vía Láctea, el zoom de `G`.
+    if (this.orbit.galaxyTarget || this.orbit.cosmicTraveling) this.orbit.travelTo(this.sunReturn());
+    else this.orbit.zoomTo(SOLAR_RETURN_KM);
     return true;
+  }
+
+  /** Fuera del sistema solar: en otra galaxia, de viaje entre galaxias o más allá del relevo. */
+  private get inCosmos(): boolean {
+    return this.orbit.galaxyTarget !== null || this.orbit.cosmicTraveling || this.cameraSunKm > HANDOFF_START_KM;
+  }
+
+  /**
+   * Viaja a una galaxia (§14.5). La Vía Láctea es la vista desde fuera con el Sol enfocado
+   * (la de `G`); las demás se orbitan. Desde un planeta, primero al Sol.
+   */
+  focusGalaxy(id: GalaxyId): void {
+    if (this.flying) this.exitFly();
+    this.pendingFocus = null;
+    this.pendingLand = false;
+    this.pendingSite = null;
+    this.pendingGalaxy = false;
+    this.pendingGalaxyId = null;
+    const sun = this.bodies[0];
+    if (this.orbit.focus !== sun || this.orbit.inTransition) {
+      this.focus(sun);
+      this.pendingGalaxyId = id;
+      return;
+    }
+    void this.cosmic.load();
+    this.setReference(sun);
+    this.orbit.travelTo(id === 'milkyway' ? this.milkyWayView() : this.galaxyDestination(id));
+    this.hud.coach.dismiss();
+  }
+
+  /** La Vía Láctea entera, como la deja `G`: la vuelta a la órbita del Sol, sin saltos. */
+  private milkyWayView(): CosmicDestination {
+    return { id: 'milkyway', centerKm: GALACTIC_CENTER_KM, radiusKm: 50_000 * LY_KM, normal: GALACTIC_NORTH, arrivalDir: GALAXY_VIEW_DIR, viewKm: GALAXY_VIEW_KM, mode: 'sun' };
+  }
+
+  /** De vuelta al sistema solar: a 600 UA del Sol, un poco por encima de la eclíptica. */
+  private sunReturn(): CosmicDestination {
+    const c = this.cameraKm, az = Math.atan2(c.z, c.x), el = 0.35;
+    const dir = { x: Math.cos(az) * Math.cos(el), y: Math.sin(el), z: Math.sin(az) * Math.cos(el) };
+    return { id: 'sun', centerKm: { x: 0, y: 0, z: 0 }, radiusKm: this.bodies[0].data.radiusKm, normal: { x: 0, y: 1, z: 0 }, arrivalDir: dir, viewKm: SOLAR_RETURN_KM, mode: 'sun' };
+  }
+
+  /**
+   * Otra galaxia: se llega por el lado del Sol, viéndola como desde la Tierra (de canto el
+   * Sombrero, de cara el Molinete: como en las fotos), a 2,6 radios, con su eje mayor en
+   * horizontal. Después se puede girar alrededor con el arrastre.
+   */
+  private galaxyDestination(id: GalaxyId): CosmicDestination {
+    const data = GALAXIES[id];
+    const centerKm = galaxyCenterKm(data);
+    const { normal } = galaxyBasis(data);
+    const d = Math.hypot(centerKm.x, centerKm.y, centerKm.z);
+    const toSun = { x: -centerKm.x / d, y: -centerKm.y / d, z: -centerKm.z / d };
+    // La normal hacia nuestro lado: el «arriba» al orbitarla y el eje del arrastre.
+    const side = Math.sign(normal.x * toSun.x + normal.y * toSun.y + normal.z * toSun.z) || 1;
+    const radiusKm = (data.diameterLy / 2) * LY_KM;
+    return {
+      id,
+      centerKm,
+      radiusKm,
+      normal: { x: normal.x * side, y: normal.y * side, z: normal.z * side },
+      arrivalDir: toSun,
+      viewKm: radiusKm * 2.6,
+      mode: 'galaxy',
+    };
+  }
+
+  /**
+   * Exposición del cosmos (como el ojo): alrededor de una galaxia pequeña y brillante (el
+   * Sombrero, M87) baja para que no salga blanca; con la Vía Láctea, 1. Se adapta en ~1 s.
+   */
+  private updateCosmicExposure(dt: number): void {
+    const dest = this.orbit.cosmicDestination;
+    let target = 1;
+    if (dest?.mode === 'galaxy') {
+      const g = GALAXIES[dest.id as GalaxyId];
+      // Brillo superficial respecto a la Vía Láctea: luz / área del disco.
+      const surface = g.light / Math.pow(g.diameterLy / GALAXIES.milkyway.diameterLy, 2);
+      const c = this.cameraKm, k = dest.centerKm;
+      const near = 1 - logStep(Math.hypot(k.x - c.x, k.y - c.y, k.z - c.z), dest.radiusKm * 6, dest.radiusKm * 60);
+      target = 1 + (Math.min(1, Math.max(0.12, 1.2 / surface)) - 1) * near;
+    }
+    const e = cosmicLook.exposure.value;
+    cosmicLook.exposure.value = Math.exp(Math.log(e) + (Math.log(target) - Math.log(e)) * (1 - Math.exp(-dt * 3)));
   }
 
   focus(body: CelestialBody, arrival?: { x: number; y: number; z: number }): void {
@@ -441,6 +537,11 @@ export class Engine {
     if (this.flying) this.exitFly();
     this.pendingFocus = null;
     const sun = this.bodies[0];
+    // Desde otra galaxia, de vuelta al sistema solar.
+    if (this.orbit.galaxyTarget || this.orbit.cosmicTraveling) {
+      this.leaveCosmos(() => undefined);
+      return;
+    }
     if (this.cameraSunKm > HANDOFF_START_KM) {
       this.orbit.zoomTo(SOLAR_RETURN_KM);
       return;
@@ -599,15 +700,20 @@ export class Engine {
     layoutSystem(this.bodies, this.clock.timeMs, this.scale);
     for (const body of this.bodies) body.orient(this.clock.timeMs);
     if (this.pendingLand && !this.pendingFocus && !this.flying && !this.orbit.inTransition) this.land(this.pendingSite ?? undefined);
-    if (this.pendingFocus && !this.orbit.descending) {
+    if (this.pendingFocus && !this.orbit.busy) {
       // De vuelta en el sistema solar, el viaje; si el usuario cortó el zoom con la rueda, nada.
       const then = this.pendingFocus;
       this.pendingFocus = null;
-      if (this.cameraSunKm <= HANDOFF_START_KM) then();
+      if (!this.orbit.galaxyTarget && this.cameraSunKm <= HANDOFF_START_KM) then();
     }
     if (this.pendingGalaxy && !this.flying && !this.orbit.inTransition) {
       this.pendingGalaxy = false;
       this.toggleGalaxy();
+    }
+    if (this.pendingGalaxyId && !this.flying && !this.orbit.busy) {
+      const id = this.pendingGalaxyId;
+      this.pendingGalaxyId = null;
+      this.focusGalaxy(id);
     }
     this.rig.update(dt);
     this.updateWarp();
@@ -652,6 +758,7 @@ export class Engine {
     starLook.brightness.value = (1 - 0.95 * daySky) * (1 - galaxy);
     if (this.stars) this.stars.object.visible = galaxy < 1;
     cosmicLook.sky.value = 1 - 0.95 * daySky;
+    this.updateCosmicExposure(dt);
     this.cosmic.update(this.cameraKm, this.solar, galaxy);
 
     this.pipeline.render();
@@ -686,8 +793,24 @@ export class Engine {
       particles: this.bodies.reduce((n, b) => n + (this.solarHidden ? 0 : b.particleCount), (this.stars?.object.visible ? this.stars.count : 0) + this.cosmic.particleCount),
       pixelRatio: this.renderer.getPixelRatio(),
       backend: this.isWebGLFallback ? 'WebGL2' : 'WebGPU',
+      cosmic: this.cosmicHud(),
     }, now);
   };
+
+  /**
+   * Galaxia de referencia para la interfaz (§14.5): la que se orbita o a la que se viaja; fuera
+   * del sistema solar, si no, la Vía Láctea. Dentro, null (manda el cuerpo enfocado).
+   */
+  private cosmicHud(): { id: GalaxyId; distanceKm: number; sunKm: number } | null {
+    const dest = this.orbit.cosmicDestination;
+    let id: GalaxyId | null = null;
+    if (dest?.mode === 'galaxy') id = dest.id as GalaxyId;
+    else if (this.solar < 0.5) id = 'milkyway';
+    if (!id) return null;
+    const center = id === 'milkyway' ? GALACTIC_CENTER_KM : this.galaxyCenters[id];
+    const c = this.cameraKm;
+    return { id, distanceKm: Math.hypot(center.x - c.x, center.y - c.y, center.z - c.z), sunKm: this.cameraSunKm };
+  }
 
   /**
    * Relevo sistema solar ↔ cosmos (§14.4): la cámara en km verdaderos respecto al Sol y,
@@ -716,14 +839,37 @@ export class Engine {
     }
   }
 
-  /** Nombres de la capa cósmica: dónde está el Sol y el centro galáctico. */
+  /**
+   * Nombres de la capa cósmica: dónde está el Sol, el centro galáctico y las galaxias, que se
+   * pulsan para viajar. De lejos (desde otra galaxia), la nuestra lleva un solo nombre.
+   */
   private updateMarkers(galaxy: number): void {
     const c = this.cameraKm, d = this.cameraSunKm || 1;
+    const on = this.labels.visible;
     const gc = this.cosmic.galacticCenterFromCamera();
-    this.markers.update(this.rig.camera, window.innerWidth, window.innerHeight, [
-      { text: 'Sol · estás aquí', color: '#ffe6b0', dir: { x: -c.x / d, y: -c.y / d, z: -c.z / d }, show: this.solar < 0.5 && this.labels.visible },
-      { text: 'Centro galáctico', color: '#ffd38a', dir: gc, show: galaxy > 0.5 && this.cameraSunKm > 3e16 && this.labels.visible },
-    ]);
+    const fromCenter = Math.hypot(GALACTIC_CENTER_KM.x - c.x, GALACTIC_CENTER_KM.y - c.y, GALACTIC_CENTER_KM.z - c.z);
+    const far = fromCenter > 300_000 * LY_KM;
+    const current = this.orbit.cosmicDestination?.id;
+    const markers: Marker[] = [
+      { key: 'sun', text: 'Sol · estás aquí', color: '#ffe6b0', dir: { x: -c.x / d, y: -c.y / d, z: -c.z / d }, show: on && this.solar < 0.5 && !far },
+      { key: 'center', text: 'Centro galáctico', color: '#ffd38a', dir: gc, show: on && galaxy > 0.5 && this.cameraSunKm > 3e16 && !far },
+      { key: 'milkyway', text: GALAXIES.milkyway.name, color: '#f2e6cf', dir: gc, show: on && galaxy > 0.5 && far, onClick: () => this.focusGalaxy('milkyway') },
+    ];
+    for (const id of MARKER_ORDER) {
+      const centerKm = this.galaxyCenters[id];
+      const rx = centerKm.x - c.x, ry = centerKm.y - c.y, rz = centerKm.z - c.z;
+      const dist = Math.hypot(rx, ry, rz) || 1;
+      const radiusPx = ((GALAXIES[id].diameterLy / 2) * LY_KM) / dist / pixelAngle.value;
+      markers.push({
+        key: id,
+        text: GALAXIES[id].name,
+        color: `#${GALAXIES[id].color.toString(16).padStart(6, '0')}`,
+        dir: { x: rx / dist, y: ry / dist, z: rz / dist },
+        show: on && galaxy > 0.5 && id !== current && radiusPx < 60,
+        onClick: () => this.focusGalaxy(id),
+      });
+    }
+    this.markers.update(this.rig.camera, window.innerWidth, window.innerHeight, markers);
   }
 
   /** Lo que suena (§13): el gigante que más se ve, el Sol, el viento del cuerpo y el warp. */

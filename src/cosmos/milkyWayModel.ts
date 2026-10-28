@@ -22,6 +22,7 @@
 import { galacticToScene } from '../astro/frames';
 import { KPC_KM } from '../astro/galaxy';
 import { DEG, LY_KM } from '../astro/units';
+import { rng, samplers, smoothstep } from './random';
 
 const LY_PER_KPC = KPC_KM / LY_KM;
 
@@ -88,33 +89,19 @@ const COMPONENTS = [
 ] as const;
 type Kind = (typeof COMPONENTS)[number]['kind'];
 
+/**
+ * Luz media por partícula del modelo (antes de repartirla por el área): las demás galaxias
+ * brillan en proporción a esta, con su luz relativa (`GalaxyData.light`).
+ */
+export const MILKY_WAY_LIGHT_PER_PARTICLE = COMPONENTS.reduce((s, c) => s + c.share * c.light, 0) / COMPONENTS.reduce((s, c) => s + c.share, 0);
+
 /** Diámetro de referencia (kpc): una partícula de este tamaño brilla con su luz tal cual. */
 const SIZE_REF = 0.25;
-
-/** Generador pseudoaleatorio con semilla (mulberry32): la galaxia sale igual cada vez. */
-function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-const smoothstep = (a: number, b: number, x: number) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
+export const SIZE_REF_LY = SIZE_REF * LY_PER_KPC;
 
 export function generateMilkyWay({ stars, dust, seed }: GalaxyRequest): GalaxyResult {
   const rand = rng(seed);
-  const gauss = () => Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
-  const laplace = (h: number) => (rand() < 0.5 ? -1 : 1) * h * -Math.log(1 - rand());
-  /** Radio de un disco exponencial (densidad superficial ∝ e^(−R/h)): Gamma(2, h). */
-  const diskRadius = (h: number) => -h * Math.log((1 - rand()) * (1 - rand()));
-  const between = (a: number, b: number) => a + (b - a) * rand();
+  const { gauss, laplace, diskRadius, between } = samplers(rand);
 
   const armTan = ARMS.map((a) => Math.tan(a.pitch * DEG));
   const armWidth = (R: number) => 0.1 + 0.024 * R;

@@ -4,6 +4,8 @@
  */
 import { BODIES, type BodyId } from '../astro/bodies';
 import { FACTS, G, ofName } from '../astro/facts';
+import type { GalaxyData } from '../astro/galaxies';
+import { LY_KM } from '../astro/units';
 import { el, iconButton, setText } from './dom';
 import { formatDistance, formatDuration, lightTime, scientific } from './format';
 import { icons } from './icons';
@@ -45,6 +47,8 @@ export class InfoPanel {
   private readonly land: HTMLButtonElement;
   private readonly source: HTMLElement;
   private id: BodyId | null = null;
+  /** Lo que enseña: el id del cuerpo o `galaxy:…` (el mismo id con otra cosa delante no se repinta). */
+  private key = '';
   private lastLive = 0;
 
   constructor(private readonly actions: { onClose(): void; onLand(): void }) {
@@ -98,9 +102,51 @@ export class InfoPanel {
     this.lastLive = 0;
   }
 
+  /**
+   * Ficha de una galaxia (§14.5): tipo, tamaño, estrellas, distancia, cuánto tarda su luz,
+   * si se acerca o se aleja, su grupo y sus satélites; en vivo, la distancia a la cámara.
+   */
+  showGalaxy(data: GalaxyData, satellites: string[]): void {
+    const key = `galaxy:${data.id}`;
+    if (key === this.key) return;
+    this.key = key;
+    this.id = null;
+    setText(this.kicker, `${data.type} · ${data.group}`);
+    setText(this.name, data.name);
+    setText(this.blurb, data.blurb);
+    this.el.style.setProperty('--c', `#${data.color.toString(16).padStart(6, '0')}`);
+    const milkyWay = data.id === 'milkyway';
+    const ly = data.distanceLy;
+    const rows: [string, string, string?][] = [
+      ['Tipo', data.hubble],
+      ['Diámetro', formatDistance(data.diameterLy * LY_KM)],
+    ];
+    if (data.stars) rows.push(['Estrellas', data.stars]);
+    rows.push(milkyWay ? ['El Sol, del centro', formatDistance(ly * LY_KM), 'en el brazo de Orión'] : ['Distancia', formatDistance(ly * LY_KM)]);
+    if (!milkyWay) rows.push(['Su luz tarda', ly >= 1e6 ? `${num(ly / 1e6, 2)} millones de años` : `${num(ly, 0)} años`, 'en llegar a la Tierra']);
+    if (data.radialKmS !== undefined) rows.push([data.radialKmS < 0 ? 'Se acerca' : 'Se aleja', `${num(Math.abs(data.radialKmS), 0)} km/s`, 'respecto al Sol']);
+    rows.push(['Grupo', data.group]);
+    if (satellites.length) rows.push(['Satélites', satellites.join(', ')]);
+    this.grid.replaceChildren(...rows.map(([label, value, note]) => {
+      const wrap = el('div');
+      const dd = el('dd', '', value);
+      if (note) dd.append(el('small', '', note));
+      wrap.append(el('dt', '', label), dd);
+      return wrap;
+    }));
+    this.liveRows.sunDistanceKm.hidden = true;
+    this.liveRows.light.hidden = true;
+    this.liveRows.earthDistanceKm.hidden = true;
+    this.land.hidden = true;
+    setText(this.source, `Posición, velocidad del Grupo Local y orientación: SIMBAD. Distancia, diámetro (D25 del RC3), tipo y velocidad: NED. ${data.refs} Comprobado el 28/10/2026. La forma es un modelo por tipo.`);
+    this.lastLive = 0;
+  }
+
   show(id: BodyId, landable: boolean): void {
-    if (id === this.id && this.land.hidden === !landable) return;
+    if (id === this.key && this.land.hidden === !landable) return;
+    this.key = id;
     this.id = id;
+    this.liveRows.cameraDistanceKm.hidden = false;
     const data = BODIES[id];
     const facts = FACTS[id];
     setText(this.kicker, bodyKicker(id));
