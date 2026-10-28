@@ -57,7 +57,7 @@ export interface HudState extends InfoLive {
   nearGround: boolean;
   descending: boolean;
   time: TimeState;
-  tools: Omit<ToolState, 'sky'>;
+  tools: ToolState;
   travel: { name: string; progress: number; distanceKm: number } | null;
   stats: FrameStats;
   particles: number;
@@ -107,12 +107,12 @@ export class Hud {
       onSelect: (id) => actions.onSelectBody(id),
       onSelectGalaxy: (id) => actions.onSelectGalaxy(id as GalaxyId),
       onSolarSystem: actions.onSolarSystem,
+      onConstellations: () => this.toggleSky(),
     });
     this.tools = new Toolbar({
       onSetScale: actions.onSetScale,
       onToggleOrbits: actions.onToggleOrbits,
       onToggleLabels: actions.onToggleLabels,
-      onConstellations: () => this.toggleSky(),
       onToggleFly: actions.onToggleFly,
       onToggleSound: actions.onToggleSound,
       onEvents: () => this.toggleEvents(),
@@ -249,11 +249,12 @@ export class Hud {
       siteName: site?.name ?? null,
     });
     this.time.update(s.time);
-    this.tools.update({ ...s.tools, sky: this.sky.open });
+    this.tools.update(s.tools);
     this.info.landDisabled = s.descending;
     this.info.update(s, now);
     this.events.update(s.time.date.getTime());
     this.sky.update(s.time.date.getTime(), now);
+    this.dock.setSkyOpen(this.sky.open);
     this.settings.update({ particles: s.particles, pixelRatio: s.pixelRatio, backend: s.backend, fps: s.stats.fps, frameMs: s.stats.frameMs }, now);
   }
 
@@ -274,7 +275,7 @@ export class Hud {
       descending: false,
       siteName: null,
     });
-    this.tools.update({ ...s.tools, sky: this.sky.open });
+    this.tools.update(s.tools);
     this.info.update({ ...s, cameraDistanceKm: cosmic.distanceKm }, performance.now());
     this.events.update(s.time.date.getTime());
     this.settings.update({ particles: s.particles, pixelRatio: s.pixelRatio, backend: s.backend, fps: s.stats.fps, frameMs: s.stats.frameMs }, performance.now());
@@ -314,6 +315,27 @@ export class Hud {
   private toggleSky(): void {
     this.sky.setOpen(!this.sky.open);
     if (this.sky.open) this.closeOthers();
+  }
+
+  /**
+   * Lo que queda de pantalla para el cielo (px), sin la barra de abajo ni el panel de
+   * constelaciones: allí se encuadra la elegida (§15.3). A la izquierda del panel o encima
+   * (en pantallas estrechas va abajo), lo que sea mayor.
+   */
+  skyArea(): { x: number; y: number; w: number; h: number } {
+    const W = window.innerWidth, H = window.innerHeight;
+    const bottom = this.layer.querySelector('.ui-bottom')?.getBoundingClientRect().top ?? H;
+    const top = 0, floor = Math.max(H * 0.4, Math.min(H, bottom - 8));
+    if (!this.sky.open) return { x: 0, y: top, w: W, h: floor - top };
+    const p = this.sky.el.getBoundingClientRect();
+    const left = { x: 0, y: top, w: Math.max(W * 0.3, p.left - 16), h: floor - top };
+    const above = { x: 0, y: top, w: W, h: Math.max(H * 0.25, Math.min(floor, p.top - 16) - top) };
+    return left.w * left.h >= above.w * above.h ? left : above;
+  }
+
+  /** Constelación encuadrada: el título y el navegador se apartan (se ven al pasar el ratón). */
+  setSkyFocus(on: boolean): void {
+    this.root.classList.toggle('sky-focus', on);
   }
 
   /** Ficha de una constelación (clic en el cielo o en su nombre). */

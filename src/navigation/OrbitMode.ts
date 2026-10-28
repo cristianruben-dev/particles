@@ -148,6 +148,10 @@ export class OrbitMode implements NavigationMode {
     toPitch: number;
   } | null = null;
 
+  /** Mirada al cielo (§15.3): hacia dónde, con qué «arriba», si está pedida y su progreso (0–1). */
+  private readonly sky = { aim: { x: 0, y: 0, z: -1 } as Dir, up: { x: 0, y: 1, z: 0 } as Dir, on: false, t: 0 };
+  /** Cambia con cada arrastre o golpe de rueda: el motor suelta entonces el encuadre del cielo. */
+  interactions = 0;
   private dragging: 0 | 1 | 2 = 0;
   private dragDistance = 0;
   private lastPointer = { x: 0, y: 0 };
@@ -254,6 +258,7 @@ export class OrbitMode implements NavigationMode {
    * el centro hasta `toDir` (unitaria, ejes de escena): el zoom hasta la galaxia y de vuelta.
    */
   zoomTo(altitudeKm: number, toDir?: Dir): void {
+    this.sky.on = false;
     if (this.transition || this.cosmicTrip || this.cosmicTarget) return;
     const toAltitude = Math.min(this.maxAltitude, Math.max(this.minAltitude, altitudeKm));
     const local = toDir ? this.fromScene(toDir) : null;
@@ -276,60 +281,69 @@ export class OrbitMode implements NavigationMode {
     return 1 - THREE.MathUtils.smoothstep(Math.log(ratio), Math.log(TILT_END), Math.log(TILT_START));
   }
 
+  /** A ras de suelo la mirada tiene horizonte: el cielo se mira girando el rumbo, no con `skyLookAt`. */
+  get groundLooking(): boolean {
+    return this.frame === 'body' && this.groundLook > 0.05;
+  }
+
   /**
-   * Gira la vista hacia una dirección del cielo (unitaria, ejes de escena) sin cambiar la
-   * altitud (§15.3). En órbita, la cámara rodea el cuerpo, que sigue en el centro, hasta dejar
-   * esa dirección a su lado y dentro de la pantalla; a ras de suelo gira la mirada.
-   * @param fovDeg campo de visión vertical; `aspect`, ancho / alto.
-   * @returns 'below' si a ras de suelo queda bajo el horizonte; 'busy' durante un viaje.
+   * A ras de suelo, gira el rumbo y la inclinación de la mirada hacia una dirección del cielo
+   * (unitaria, ejes de escena) sin cambiar la altitud (§15.3).
+   * @returns 'below' si queda bajo el horizonte; 'busy' durante un viaje.
    */
-  lookToward(target: Dir, fovDeg: number, aspect: number): 'ok' | 'below' | 'busy' {
+  lookFromGround(target: Dir): 'ok' | 'below' | 'busy' {
     if (this.transition) return 'busy';
     this.descent = null;
     const dir = this.toScene(fromAngles(this.azimuth, this.elevation));
     const t = this.groundLook;
-    if (this.frame === 'body' && t > 0.05) {
-      // Rumbo e inclinación de la mirada, con la misma base que `update`.
-      const height = dot(target, dir);
-      if (height < Math.sin(-DEG)) return 'below';
-      const tangent = tangentTo(dir, sub(this.toScene(fromAngles(this.azimuth, this.elevation + 1e-3)), dir));
-      const side = cross(dir, tangent);
-      // El giro que se ve es rumbo × t: el camino corto se busca en ese ángulo.
-      const angle = Math.atan2(dot(target, side), dot(target, tangent));
-      const current = this.heading * t;
-      this.targetHeading = (current + Math.atan2(Math.sin(angle - current), Math.cos(angle - current))) / t;
-      const tilt = Math.PI / 2 + Math.asin(Math.min(1, height));
-      this.targetPitch = Math.max(-1.2, Math.min(MAX_PITCH, (tilt - t * MAX_TILT) / Math.min(1, t * 4)));
-      return 'ok';
-    }
-    // En órbita la mirada es −dir: la dirección queda a un ángulo α del centro, hacia donde
-    // se mira ahora (el giro más corto), fuera del disco del cuerpo y dentro de la pantalla.
-    const view = { x: -dir.x, y: -dir.y, z: -dir.z };
-    let side = tangentTo(target, view);
-    if (!Number.isFinite(side.x) || Math.abs(dot(target, view)) > 0.9999) side = tangentTo(target, { x: 0, y: 1, z: 0 });
-    const r = this.focus.data.radiusKm;
-    const disc = Math.asin(Math.min(1, r / (r + this.altitude)));
-    // Medio campo de visión en la dirección de `side` en pantalla (arriba ≈ el norte de la eclíptica).
-    const tanV = Math.tan((fovDeg * DEG) / 2), tanH = tanV * aspect;
-    const vertical = Math.abs(dot(side, tangentTo(target, { x: 0, y: 1, z: 0 })));
-    const halfFov = Math.atan(Math.min(tanV / Math.max(vertical, 1e-6), tanH / Math.max(Math.sqrt(1 - vertical * vertical), 1e-6)));
-    const alpha = Math.max(0, Math.min(disc + 12 * DEG, halfFov - 7 * DEG));
-    const ca = Math.cos(alpha), sa = Math.sin(alpha);
-    const look = normalize({ x: target.x * ca + side.x * sa, y: target.y * ca + side.y * sa, z: target.z * ca + side.z * sa });
-    const toDir = { x: -look.x, y: -look.y, z: -look.z };
-    // Como `zoomTo` con la misma altitud, pero con la duración según el giro.
-    const turn = Math.acos(Math.max(-1, Math.min(1, dot(dir, toDir))));
-    this.descent = {
-      t: 0,
-      duration: 2.2 + (1.6 * turn) / Math.PI,
-      fromAltitude: this.altitude,
-      toAltitude: this.altitude,
-      fromDir: fromAngles(this.azimuth, this.elevation),
-      toDir: this.fromScene(toDir),
-      fromPitch: this.pitch,
-      toPitch: this.pitch,
-    };
+    // Rumbo e inclinación de la mirada, con la misma base que `update`.
+    const height = dot(target, dir);
+    if (height < Math.sin(-DEG)) return 'below';
+    const tangent = tangentTo(dir, sub(this.toScene(fromAngles(this.azimuth, this.elevation + 1e-3)), dir));
+    const side = cross(dir, tangent);
+    // El giro que se ve es rumbo × t: el camino corto se busca en ese ángulo.
+    const angle = Math.atan2(dot(target, side), dot(target, tangent));
+    const current = this.heading * t;
+    this.targetHeading = (current + Math.atan2(Math.sin(angle - current), Math.cos(angle - current))) / t;
+    const tilt = Math.PI / 2 + Math.asin(Math.min(1, height));
+    this.targetPitch = Math.max(-1.2, Math.min(MAX_PITCH, (tilt - t * MAX_TILT) / Math.min(1, t * 4)));
     return 'ok';
+  }
+
+  /**
+   * En órbita, la cámara se queda donde está y la mirada gira hasta `aim` (unitaria, ejes de
+   * escena) con `up` arriba (el norte celeste, como en un mapa del cielo): el cuerpo sale de la
+   * pantalla (§15.3). Se suelta con `releaseSky`, al arrastrar, con la rueda o al viajar.
+   */
+  skyLookAt(aim: Dir, up: Dir): void {
+    if (this.transition) return;
+    this.descent = null;
+    this.sky.aim = aim;
+    this.sky.up = up;
+    this.sky.on = true;
+  }
+
+  releaseSky(): void {
+    this.sky.on = false;
+  }
+
+  get skyLooking(): boolean {
+    return this.sky.on;
+  }
+
+  /** Mezcla la mirada al cielo con la de la órbita (`sky.t`, con su curva). */
+  private applySky(rig: CameraRig): void {
+    const e = easeInOut(this.sky.t);
+    if (e <= 0) return;
+    const p = rig.position, tg = rig.target;
+    const dx = tg.x - p.x, dy = tg.y - p.y, dz = tg.z - p.z;
+    const reach = Math.hypot(dx, dy, dz) || 1;
+    const v = slerp({ x: dx / reach, y: dy / reach, z: dz / reach }, this.sky.aim, e);
+    Object.assign(rig.target, { x: p.x + v.x * reach, y: p.y + v.y * reach, z: p.z + v.z * reach });
+    // Mirando casi al polo, el norte no da un «arriba»: se queda el de la órbita.
+    if (Math.abs(dot(v, this.sky.up)) > 0.995) return;
+    const up0 = tangentTo(v, rig.up), up1 = tangentTo(v, this.sky.up);
+    Object.assign(rig.up, normalize({ x: up0.x + (up1.x - up0.x) * e, y: up0.y + (up1.y - up0.y) * e, z: up0.z + (up1.z - up0.z) * e }));
   }
 
   /**
@@ -337,6 +351,7 @@ export class OrbitMode implements NavigationMode {
    * longitud planetocéntricas, este positivo), la cámara se desplaza hasta encima de él.
    */
   land(site?: { lat: number; lon: number }): void {
+    this.sky.on = false;
     const body = this.focus;
     if (!body.landable || this.transition) return;
     this.setFrame('body');
@@ -378,6 +393,7 @@ export class OrbitMode implements NavigationMode {
    * altitud. Lo que cambia es la mirada, que pasa a apuntar al cuerpo (lo suaviza el rig).
    */
   adopt(rig: CameraRig, body: CelestialBody): void {
+    this.sky.on = false;
     this.transition = null;
     this.descent = null;
     this.focus = body;
@@ -402,6 +418,7 @@ export class OrbitMode implements NavigationMode {
    * los dos lados), la dirección por la esfera y el «arriba» hacia el del destino.
    */
   travelTo(dest: CosmicDestination): void {
+    this.sky.on = false;
     if (this.transition || this.focus.parent !== null) return;
     this.descent = null;
     const l = this.last;
@@ -541,6 +558,7 @@ export class OrbitMode implements NavigationMode {
    * llegada, solo gira la cámara hasta allí.
    */
   focusOn(body: CelestialBody, rig: CameraRig, arrival?: Dir, distanceRadii?: number): void {
+    this.sky.on = false;
     if (body === this.focus && !this.transition && !arrival && !this.cosmicTarget) return;
     this.descent = null;
     // Desde una galaxia el viaje partiría del borde del relevo: el Engine vuelve antes (§14.5).
@@ -599,7 +617,11 @@ export class OrbitMode implements NavigationMode {
       this.lastPointer = { x: e.clientX, y: e.clientY };
       this.dragDistance += Math.abs(dx) + Math.abs(dy);
       if (this.cosmicTrip) return;
-      if (this.dragDistance > 4) this.descent = null;
+      if (this.dragDistance > 4) {
+        this.descent = null;
+        this.sky.on = false;
+        this.interactions++;
+      }
       if (this.dragging === 2) {
         this.targetHeading -= dx * 0.004;
         this.targetPitch = Math.max(-1.2, Math.min(MAX_PITCH, this.targetPitch - dy * 0.004));
@@ -623,6 +645,8 @@ export class OrbitMode implements NavigationMode {
       // En un viaje entre galaxias la rueda no hace nada (cortarlo dejaría la cámara a medio camino).
       if (this.cosmicTrip) return;
       this.descent = null;
+      this.sky.on = false;
+      this.interactions++;
       // Fuera del sistema solar, el triple de rápido: hay 8 órdenes de magnitud hasta la galaxia.
       const rate = 1 + 2 * logStep(this.targetAltitude, HANDOFF_START_KM, 1e17);
       const next = this.targetAltitude * Math.exp(e.deltaY * 0.0015 * rate);
@@ -631,6 +655,8 @@ export class OrbitMode implements NavigationMode {
   }
 
   update(rig: CameraRig, dt: number): void {
+    // La mirada al cielo entra y sale en 1,6 s (con la curva de `applySky`).
+    this.sky.t = Math.min(1, Math.max(0, this.sky.t + (this.sky.on ? dt : -dt) / 1.6));
     if (this.cosmicTrip || this.cosmicTarget) {
       this.updateCosmic(rig, dt);
       return;
@@ -728,6 +754,7 @@ export class OrbitMode implements NavigationMode {
     if (tr) {
       Object.assign(rig.target, target);
       Object.assign(rig.up, { x: 0, y: 1, z: 0 });
+      this.applySky(rig);
       return;
     }
     // A ras de suelo, la mirada se inclina hacia el horizonte (con el rumbo elegido).
@@ -757,6 +784,7 @@ export class OrbitMode implements NavigationMode {
     l.distanceKm = distanceKm;
     Object.assign(l.dir, dir);
     Object.assign(l.up, rig.up);
+    this.applySky(rig);
   }
 
   /** Orientación del marco → escena. Alrededor de otra galaxia, el marco es el de su disco. */

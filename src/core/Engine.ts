@@ -8,7 +8,7 @@ import type { ShadowEvent } from '../astro/eclipses';
 import { findShadowEvents } from '../astro/eclipses';
 import { FACTS, type LandingSite } from '../astro/facts';
 import { refreshIssTle } from '../astro/iss';
-import { eclToScene, raDecToVector, vec3d } from '../astro/frames';
+import { eclToScene, equatorialToEcliptic, raDecToVector, vec3d, type Vec3d } from '../astro/frames';
 import { GALAXIES, GALAXY_IDS, galaxyBasis, galaxyCenterKm, type GalaxyId } from '../astro/galaxies';
 import { GALACTIC_CENTER_DIR, GALACTIC_CENTER_KM, GALACTIC_NORTH } from '../astro/galaxy';
 import { AU_KM, DEG, LY_KM } from '../astro/units';
@@ -67,6 +67,33 @@ const GALAXY_VIEW_DIR = (() => {
   const c = GALACTIC_CENTER_DIR, n = GALACTIC_NORTH, a = Math.cos(1.2), b = Math.sin(1.2);
   return { x: -c.x * a + n.x * b, y: -c.y * a + n.y * b, z: -c.z * a + n.z * b };
 })();
+/** Polo norte celeste en ejes de escena: el «arriba» al encuadrar una constelación desde la órbita. */
+const CELESTIAL_NORTH = eclToScene(equatorialToEcliptic({ x: 0, y: 0, z: 1 }));
+
+/**
+ * Dirección a la que mirar para que `target` (unitaria) quede desplazada (sx, sy) en el plano
+ * tangente de la imagen (en tangentes: NDC × tan del medio campo de visión), con `up` arriba.
+ * Se resuelve en el marco de la propia mirada (derecha = mirada × arriba), que cambia con ella:
+ * unas pocas iteraciones.
+ */
+function aimAt(target: Vec3d, up: Vec3d, sx: number, sy: number): Vec3d {
+  const length = Math.hypot(1, sx, sy);
+  let aim = target;
+  for (let k = 0; k < 6; k++) {
+    let r = { x: aim.y * up.z - aim.z * up.y, y: aim.z * up.x - aim.x * up.z, z: aim.x * up.y - aim.y * up.x };
+    const rl = Math.hypot(r.x, r.y, r.z);
+    // Mirando al polo, `up` no sirve: se queda donde está.
+    if (rl < 1e-3) return aim;
+    r = { x: r.x / rl, y: r.y / rl, z: r.z / rl };
+    const u = { x: r.y * aim.z - r.z * aim.y, y: r.z * aim.x - r.x * aim.z, z: r.x * aim.y - r.y * aim.x };
+    // target ∝ aim + r·sx + u·sy  ⇒  aim ∝ target·|(1, sx, sy)| − r·sx − u·sy.
+    const a = { x: target.x * length - r.x * sx - u.x * sy, y: target.y * length - r.y * sx - u.y * sy, z: target.z * length - r.z * sx - u.z * sy };
+    const l = Math.hypot(a.x, a.y, a.z);
+    aim = { x: a.x / l, y: a.y / l, z: a.z / l };
+  }
+  return aim;
+}
+
 /** …y de vuelta, el sistema solar entero antes de viajar a un cuerpo. */
 const SOLAR_RETURN_KM = 600 * AU_KM;
 
@@ -126,6 +153,13 @@ export class Engine {
   private readonly pointerRaycaster = new THREE.Raycaster();
   /** Botones del ratón pulsados sobre el canvas (arrastrando, el cielo no se resalta). */
   private pointerButtons = 0;
+  /**
+   * Constelación encuadrada (§15.3): el campo de visión que pide y las interacciones de la
+   * órbita al encuadrarla (si cambian, el usuario ha movido la cámara y se suelta).
+   */
+  private skyFrame: { fov: number; interactions: number; ground: boolean } | null = null;
+  /** Campo de visión sin el warp: el base o el de la constelación encuadrada, con suavizado. */
+  private skyFov = BASE_FOV;
   /** Sonido ambiente (§13): activado salvo que se apagara en otra visita. */
   private sound!: Soundscape;
 
@@ -199,12 +233,14 @@ export class Engine {
       sky: {
         toggles: this.sky.toggles,
         altitude: (i) => this.sky.altitude(i, this.reference.sky),
-        // Elegida en la lista: se resalta y la cámara gira hacia ella.
+        // Elegida en el menú: se resalta y se encuadra; ninguna (al cerrar la ficha), se suelta.
         onSelect: (i) => {
           this.sky.selected = i;
-          if (i >= 0) this.lookAtConstellation(i);
+          if (i >= 0) this.frameConstellation(i);
+          else this.releaseSkyFrame();
         },
-        onLook: (i) => this.lookAtConstellation(i),
+        onLook: (i) => this.frameConstellation(i),
+        onHover: (i) => this.sky.setMenuHover(i),
       },
       onSlower: () => this.clock.slower(),
       onFaster: () => this.clock.faster(),
@@ -549,14 +585,19 @@ export class Engine {
     if (i >= 0) this.showConstellation(i);
   }
 
-  /** Resalta una constelación y abre su ficha. */
+  /** Resalta una constelación, abre su ficha y la encuadra (clic en el cielo o en su nombre). */
   private showConstellation(i: number): void {
     this.sky.selected = i;
     this.hud.showConstellation(i, this.clock.timeMs);
+    this.frameConstellation(i);
   }
 
-  /** Gira la cámara hacia una constelación sin cambiar de cuerpo ni de altitud (§15.3). */
-  private lookAtConstellation(i: number): void {
+  /**
+   * Encuadra una constelación sin cambiar de cuerpo ni de altitud (§15.3): la mirada gira hasta
+   * su figura, con el norte celeste arriba, y el campo de visión se ajusta para que ocupe el
+   * hueco que deja el panel, centrada en él. A ras de suelo gira el rumbo (horizonte nivelado).
+   */
+  private frameConstellation(i: number): void {
     const c = this.sky.data?.constellations[i];
     if (!c) return;
     this.sky.selected = i;
@@ -565,9 +606,33 @@ export class Engine {
       return;
     }
     if (this.flying) this.exitFly();
-    const result = this.orbit.lookToward(this.sky.direction(i), this.rig.camera.fov, this.rig.camera.aspect);
-    if (result === 'below') this.hud.toasts.show(`${c.name} está ahora bajo el horizonte`, 'constellation', 3.2);
+    const W = window.innerWidth, H = window.innerHeight, aspect = W / H;
+    const free = this.hud.skyArea();
+    // El radio de la figura, en el 75 % del hueco: entre 20° (la Cruz) y 80° (la Hidra no cabe).
+    const fit = 0.75 * Math.min((free.w / W) * aspect, free.h / H);
+    const fov = Math.min(80, Math.max(20, (2 * Math.atan(Math.tan(Math.min(80, c.figure.radius) * DEG) / fit)) / DEG));
+    const tanV = Math.tan((fov * DEG) / 2);
+    const ox = ((free.x + free.w / 2) / W) * 2 - 1, oy = 1 - ((free.y + free.h / 2) / H) * 2;
+    const ground = this.orbit.groundLooking;
+    const up = ground ? this.reference.sky.up : CELESTIAL_NORTH;
+    const aim = aimAt(this.sky.direction(i), up, ox * tanV * aspect, oy * tanV);
+    if (ground) {
+      const result = this.orbit.lookFromGround(aim);
+      if (result === 'below') this.hud.toasts.show(`${c.name} está ahora bajo el horizonte`, 'constellation', 3.2);
+      if (result !== 'ok') return;
+    } else {
+      this.orbit.skyLookAt(aim, up);
+    }
+    this.skyFrame = { fov, interactions: this.orbit.interactions, ground };
+    this.hud.setSkyFocus(true);
     this.hud.coach.dismiss();
+  }
+
+  /** Vuelve a la vista de la órbita y al campo de visión normal (la selección se queda). */
+  private releaseSkyFrame(): void {
+    this.skyFrame = null;
+    this.orbit.releaseSky();
+    this.hud.setSkyFocus(false);
   }
 
   toggleFly(): void {
@@ -765,8 +830,11 @@ export class Engine {
       this.pendingGalaxyId = null;
       this.focusGalaxy(id);
     }
+    // El encuadre de una constelación se suelta al mover la cámara (o al viajar, volar o salir).
+    const sf = this.skyFrame;
+    if (sf && (this.flying || this.orbit.interactions !== sf.interactions || (!sf.ground && !this.orbit.skyLooking) || this.cameraSunKm > STARS_FADE_START_KM)) this.releaseSkyFrame();
     this.rig.update(dt);
-    this.updateWarp();
+    this.updateWarp(dt);
     this.updateHandoff();
 
     let pointer: THREE.Vector3 | null = null;
@@ -813,7 +881,10 @@ export class Engine {
     // El cielo bajo el cursor: no arrastrando, en vuelo libre ni con un cuerpo debajo.
     const overBody = this.pointerNdc && this.solar >= 0.5 && pickBody(this.pointerNdc.x, this.pointerNdc.y, this.rig.camera, this.bodies, window.innerHeight);
     this.sky.setPointer(pointer && !this.pointerButtons && !this.flying && !overBody ? pointer : null);
-    this.sky.update({ dt, camera: this.rig.camera, width: window.innerWidth, height: window.innerHeight, brightness: starLook.brightness.value, visible: galaxy < 1, sky, bodies: this.bodies });
+    // Mano sobre una constelación: se puede pulsar.
+    const cursor = this.sky.hovering ? 'pointer' : '';
+    if (this.renderer.domElement.style.cursor !== cursor) this.renderer.domElement.style.cursor = cursor;
+    this.sky.update({ dt, camera: this.rig.camera, width: window.innerWidth, height: window.innerHeight, brightness: starLook.brightness.value, visible: galaxy < 1, sky, bodies: this.bodies, fov: this.rig.camera.fov, seconds: now / 1000 });
 
     this.pipeline.render();
     this.labels.suppressed = this.solar < 0.5;
@@ -963,12 +1034,16 @@ export class Engine {
     });
   }
 
-  /** Warp de los viajes (§10) y un ligero aumento del campo de visión en su punto álgido. */
-  private updateWarp(): void {
+  /**
+   * Warp de los viajes (§10) y un ligero aumento del campo de visión en su punto álgido; y el
+   * zoom al encuadrar una constelación (§15.3), suavizado.
+   */
+  private updateWarp(dt: number): void {
     let w = this.flying ? this.fly.warp : this.orbit.warp;
     if (REDUCED_MOTION.matches) w *= 0.3;
     warpLook.amount.value = w;
-    const fov = BASE_FOV + 9 * w;
+    this.skyFov += ((this.skyFrame?.fov ?? BASE_FOV) - this.skyFov) * (1 - Math.exp(-dt * 2.4));
+    const fov = this.skyFov + 9 * w;
     if (Math.abs(this.rig.camera.fov - fov) > 0.01) {
       this.rig.camera.fov = fov;
       this.rig.camera.updateProjectionMatrix();

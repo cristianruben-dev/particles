@@ -1,6 +1,6 @@
 /**
- * Herramientas: escala, órbitas, nombres, constelaciones, modo de vuelo, sonido, ayuda,
- * pantalla completa y ocultar la interfaz.
+ * Herramientas: escala, órbitas, nombres, modo de vuelo, sonido, ayuda, pantalla completa y
+ * ocultar la interfaz.
  */
 import { el, iconButton } from './dom';
 import { icons } from './icons';
@@ -9,7 +9,6 @@ export interface ToolActions {
   onSetScale(mode: 'compressed' | 'real'): void;
   onToggleOrbits(): void;
   onToggleLabels(): void;
-  onConstellations(): void;
   onToggleFly(): void;
   onToggleSound(): void;
   onEvents(): void;
@@ -22,8 +21,6 @@ export interface ToolState {
   scale: 'compressed' | 'real';
   orbits: boolean;
   labels: boolean;
-  /** Panel de constelaciones abierto. */
-  sky: boolean;
   flying: boolean;
   sound: boolean;
 }
@@ -34,7 +31,6 @@ export class Toolbar {
   private readonly real: HTMLButtonElement;
   private readonly orbits: HTMLButtonElement;
   private readonly labels: HTMLButtonElement;
-  private readonly sky: HTMLButtonElement;
   private readonly fly: HTMLButtonElement;
   private readonly sound: HTMLButtonElement;
   private last = '';
@@ -58,7 +54,6 @@ export class Toolbar {
 
     this.orbits = iconButton('orbits', 'Órbitas', actions.onToggleOrbits, 'O');
     this.labels = iconButton('labels', 'Nombres', actions.onToggleLabels, 'L');
-    this.sky = iconButton('constellation', 'Constelaciones', actions.onConstellations);
     this.fly = iconButton('fly', 'Vuelo libre', actions.onToggleFly, 'V', 'ui-fly-toggle');
     this.sound = iconButton('sound', 'Silenciar', actions.onToggleSound, 'M');
     const fullscreen = iconButton('fullscreen', 'Pantalla completa', () => {
@@ -72,7 +67,6 @@ export class Toolbar {
       el('span', 'ui-sep'),
       this.orbits,
       this.labels,
-      this.sky,
       el('span', 'ui-sep'),
       this.fly,
       el('span', 'ui-sep'),
@@ -86,14 +80,13 @@ export class Toolbar {
   }
 
   update(s: ToolState): void {
-    const key = `${s.scale}${s.orbits}${s.labels}${s.sky}${s.flying}${s.sound}`;
+    const key = `${s.scale}${s.orbits}${s.labels}${s.flying}${s.sound}`;
     if (key === this.last) return;
     this.last = key;
     this.compressed.classList.toggle('on', s.scale === 'compressed');
     this.real.classList.toggle('on', s.scale === 'real');
     this.orbits.classList.toggle('on', s.orbits);
     this.labels.classList.toggle('on', s.labels);
-    this.sky.classList.toggle('on', s.sky);
     this.fly.classList.toggle('on', s.flying);
     this.fly.dataset.tip = s.flying ? 'Volver a la órbita' : 'Vuelo libre';
     const tip = s.sound ? 'Silenciar' : 'Activar el sonido';

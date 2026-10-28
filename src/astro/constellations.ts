@@ -29,6 +29,15 @@ interface ConstellationRecord {
   brightest: { name: string; desig: string; mag: number; star: number };
   /** Estrellas de Yale con V ≤ 6 dentro del límite. */
   nakedEye: number;
+  /** La figura: centro y radio (para encuadrarla) y su dibujo (§15.3). */
+  figure: {
+    center: [number, number];
+    radius: number;
+    /** [x, y (−1…1, norte arriba y este a la izquierda), magnitud, nombre propio, letra de Bayer, AR, Dec]. */
+    stars: [number, number, number, string, string, number, number][];
+    /** Pares de estrellas (índices en `stars`). */
+    segments: [number, number][];
+  };
 }
 
 export interface Constellation extends ConstellationRecord {
@@ -191,6 +200,17 @@ export function constellationAt(sky: SkyData, equatorial: Vec3d): number {
   const h = ra / DEG / 15, d = dec / DEG;
   for (const [lo, hi, dlo, index] of sky.roman) if (d >= dlo && h >= lo && h < hi) return index;
   return -1;
+}
+
+const SUPERSCRIPT: Record<string, string> = { '1': '¹', '2': '²', '3': '³', '4': '⁴', '5': '⁵', '6': '⁶', '7': '⁷', '8': '⁸', '9': '⁹' };
+
+/**
+ * Nombre de una estrella de la figura: el propio si es brillante (o no tiene letra), si no la
+ * letra de Bayer (χ¹ en vez de χ1). Vacío si no tiene ninguno.
+ */
+export function figureStarLabel([, , mag, name, letter]: Constellation['figure']['stars'][number]): string {
+  if (name && (mag < 2.6 || !letter)) return name;
+  return letter.replace(/[1-9]/g, (d) => SUPERSCRIPT[d]);
 }
 
 const MS_PER_DAY = 86_400_000;

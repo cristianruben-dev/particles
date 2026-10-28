@@ -1,9 +1,10 @@
 /**
  * Navegador de cuerpos: el Sol y los planetas en una fila de esferas y, encima, las lunas
- * del sistema enfocado (o los cometas, con su botón al final de la fila). Ver
- * docs/ARQUITECTURA.md §11.
+ * del sistema enfocado (o los cometas, con su botón al final de la fila). Al final, las
+ * galaxias y el menú de constelaciones. Ver docs/ARQUITECTURA.md §11.
  */
 import { el } from './dom';
+import { icons } from './icons';
 
 export interface HudBody {
   id: string;
@@ -34,6 +35,8 @@ export interface DockActions {
   onSelectGalaxy(id: string): void;
   /** Desde el cosmos, de vuelta al sistema solar. */
   onSolarSystem(): void;
+  /** Abre o cierra el menú de constelaciones (§15.3). */
+  onConstellations(): void;
 }
 
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
@@ -47,6 +50,7 @@ export class BodyDock {
   private readonly moons: HTMLElement;
   private readonly buttons = new Map<string, HTMLButtonElement>();
   private readonly cometsToggle: HTMLButtonElement;
+  private readonly skyToggle: HTMLButtonElement;
   /** Grupo de cometas abierto con su botón (sin tener uno enfocado). */
   private cometsOpen = false;
   private activeId = '';
@@ -96,8 +100,14 @@ export class BodyDock {
     toGalaxies.dataset.key = 'G';
     toGalaxies.setAttribute('aria-label', 'Galaxias');
     toGalaxies.addEventListener('click', () => actions.onSelectGalaxy('milkyway'));
-    row.append(this.cometsToggle, toGalaxies);
-    this.solarOnly.push(this.cometsToggle, toGalaxies);
+    // Y el menú de constelaciones: el cielo que se ve desde aquí.
+    this.skyToggle = el('button', 'ui-body ui-body-sky', `<span class="ui-orb sky">${icons.constellation}</span><span class="ui-body-name">Constelaciones</span>`);
+    this.skyToggle.type = 'button';
+    this.skyToggle.dataset.tip = 'Constelaciones';
+    this.skyToggle.setAttribute('aria-label', 'Constelaciones');
+    this.skyToggle.addEventListener('click', actions.onConstellations);
+    row.append(this.cometsToggle, toGalaxies, this.skyToggle);
+    this.solarOnly.push(this.cometsToggle, toGalaxies, this.skyToggle);
 
     // En el cosmos: el sistema solar para volver y las galaxias, con sus satélites encima.
     const home = el('button', 'ui-body', '<span class="ui-orb star"></span><span class="ui-body-name">Sistema solar</span>');
@@ -125,6 +135,13 @@ export class BodyDock {
     }
     this.el.append(this.moons, row);
     this.applyMode();
+  }
+
+  /** El menú de constelaciones abierto: su botón, marcado. */
+  setSkyOpen(open: boolean): void {
+    if (this.skyToggle.classList.contains('active') === open) return;
+    this.skyToggle.classList.toggle('active', open);
+    this.skyToggle.setAttribute('aria-pressed', String(open));
   }
 
   private applyMode(): void {

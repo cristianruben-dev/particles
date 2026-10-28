@@ -228,9 +228,12 @@ const SKIP = new Set(['Men', 'Mula', 'Saik', 'Navi']);
 const hip6 = new Map(readJson('stars.6.json').features.map((f) => [f.id, f]));
 const named = [];
 const nameOf = new Map();
+/** Letra de Bayer (α, β…) de cada estrella de Yale que la tiene: para las figuras. */
+const letterOf = new Map();
 for (const [hip, s] of Object.entries(readJson('starnames.json'))) {
   const h = hip6.get(+hip);
-  if (!s.name || SKIP.has(s.name) || !h) continue;
+  const proper = s.name && !SKIP.has(s.name);
+  if (!h || (!proper && !s.bayer)) continue;
   // Entre las de Yale a menos de 0,05°, la de magnitud más parecida (α¹ y α² Cen están a 10″).
   const v = vec(lon(h.geometry.coordinates[0]), h.geometry.coordinates[1]);
   let i = -1;
@@ -238,7 +241,9 @@ for (const [hip, s] of Object.entries(readJson('starnames.json'))) {
     if (angle(stars[k].v, v) > 0.05) continue;
     if (i < 0 || Math.abs(stars[k].mag - h.properties.mag) < Math.abs(stars[i].mag - h.properties.mag)) i = k;
   }
-  if (i < 0 || nameOf.has(i)) continue;
+  if (i < 0) continue;
+  if (s.bayer && !letterOf.has(i)) letterOf.set(i, s.bayer);
+  if (!proper || nameOf.has(i)) continue;
   const name = SPANISH[s.name] ?? s.es ?? s.name;
   nameOf.set(i, { name, desig: s.desig && s.c ? `${s.desig} ${s.c}` : '' });
   named.push({ i, name, mag: stars[i].mag });
@@ -272,6 +277,51 @@ const ecliptic = [];
   }
 }
 
+// ---------------------------------------------------------------- figuras para el menú y el encuadre
+
+/**
+ * Por constelación: sus estrellas (únicas) y tramos, el centro y el radio de la figura (para
+ * encuadrarla) y el dibujo en proyección gnomónica (los tramos, círculos máximos, salen rectos)
+ * con el norte arriba y el este a la izquierda, como se ve en el cielo, en [−1, 1].
+ */
+const figures = ids.map(() => ({ stars: [], segments: [] }));
+for (const [c, ...list] of lines) {
+  const f = figures[c];
+  const local = (s) => {
+    let k = f.stars.indexOf(s);
+    if (k < 0) k = f.stars.push(s) - 1;
+    return k;
+  };
+  for (let k = 1; k < list.length; k++) {
+    const a = local(list[k - 1]), b = local(list[k]);
+    if (!f.segments.some(([x, y]) => (x === a && y === b) || (x === b && y === a))) f.segments.push([a, b]);
+  }
+}
+const figureOut = figures.map((f) => {
+  const sum = f.stars.reduce((acc, s) => [acc[0] + stars[s].v[0], acc[1] + stars[s].v[1], acc[2] + stars[s].v[2]], [0, 0, 0]);
+  const n = Math.hypot(...sum);
+  const c = sum.map((x) => x / n);
+  const radius = Math.max(...f.stars.map((s) => angle(stars[s].v, c)));
+  // Este = polo × centro; norte = centro × este.
+  let e = [-c[1], c[0], 0];
+  const el = Math.hypot(...e);
+  e = el < 1e-6 ? [0, 1, 0] : e.map((x) => x / el);
+  const north = [c[1] * e[2] - c[2] * e[1], c[2] * e[0] - c[0] * e[2], c[0] * e[1] - c[1] * e[0]];
+  const xy = f.stars.map((s) => {
+    const v = stars[s].v, d = dot(v, c);
+    return [-dot(v, e) / d, dot(v, north) / d];
+  });
+  const scale = Math.max(...xy.flat().map(Math.abs)) || 1;
+  const [ra, dec] = toRaDec(c);
+  return {
+    center: [round(ra, 3), round(dec, 3)],
+    radius: round(radius, 2),
+    /** [x, y, magnitud, nombre propio, letra de Bayer, AR, Dec]. */
+    stars: f.stars.map((s, k) => [round(xy[k][0] / scale, 3), round(xy[k][1] / scale, 3), round(stars[s].mag, 2), nameOf.get(s)?.name ?? '', letterOf.get(s) ?? '', round(stars[s].ra), round(stars[s].dec)]),
+    segments: f.segments,
+  };
+});
+
 // ---------------------------------------------------------------- salida
 
 const constellations = ids.map((id, i) => {
@@ -292,6 +342,7 @@ const constellations = ids.map((id, i) => {
     dec: decRange[i].map((x) => round(x, 2)),
     brightest: { name: star?.name ?? '', desig: star?.desig ?? '', mag: round(brightest.s.mag, 2), star: brightest.k },
     nakedEye: mine.filter(({ s }) => s.mag <= 6).length,
+    figure: figureOut[i],
   };
 });
 

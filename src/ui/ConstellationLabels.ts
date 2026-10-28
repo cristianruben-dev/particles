@@ -5,7 +5,7 @@
  * grandes (rango 1), sin solaparse, y nada bajo el horizonte. Los de las constelaciones se pulsan.
  */
 import * as THREE from 'three/webgpu';
-import type { SkyData } from '../astro/constellations';
+import { figureStarLabel, type SkyData } from '../astro/constellations';
 import { eclToScene, equatorialToEcliptic, raDecToVector, type Vec3d } from '../astro/frames';
 import { DEG } from '../astro/units';
 
@@ -15,7 +15,7 @@ const STAR_NAME_MAG = 1.9;
 interface SkyLabel {
   el: HTMLElement;
   dir: THREE.Vector3;
-  /** Constelación (índice) o −1 si es una estrella. */
+  /** Constelación (índice), −1 si es una estrella con nombre y −2 si es de la figura seleccionada. */
   index: number;
   /** Medidas aproximadas (px) para no solaparse. */
   width: number;
@@ -51,8 +51,11 @@ export class ConstellationLabels {
   private readonly v = new THREE.Vector3();
   private readonly forward = new THREE.Vector3();
   private lastState = '';
+  /** Nombres (o letras de Bayer) de las estrellas de la figura seleccionada. */
+  private members: SkyLabel[] = [];
+  private membersOf = -1;
 
-  constructor(root: HTMLElement, data: SkyData, onSelect: (index: number) => void, onHover: (index: number) => void) {
+  constructor(root: HTMLElement, private readonly data: SkyData, onSelect: (index: number) => void, onHover: (index: number) => void) {
     this.layer = document.createElement('div');
     this.layer.className = 'labels sky-labels';
     // Debajo de los nombres de los cuerpos: se añade al principio.
@@ -95,6 +98,8 @@ export class ConstellationLabels {
       this.layer.style.opacity = state;
       this.layer.style.visibility = s.fade > 0.01 ? '' : 'hidden';
     }
+    if (s.selected !== this.membersOf) this.setMembers(s.selected);
+    this.layer.classList.toggle('focus', s.selected >= 0);
     camera.getWorldDirection(this.forward);
     // Discos de los cuerpos en pantalla: todo el cielo queda detrás.
     const discs: { x: number; y: number; r: number }[] = [];
@@ -106,10 +111,11 @@ export class ConstellationLabels {
       }
     }
     const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
-    for (const label of this.labels) {
+    for (const label of [...this.members, ...this.labels]) {
       const isStar = label.index < 0;
-      const focus = !isStar && (label.index === s.hover || label.index === s.selected);
-      let show = s.fade > 0.01 && (isStar ? s.stars : s.names || focus);
+      const member = label.index === -2;
+      const focus = member || (!isStar && (label.index === s.hover || label.index === s.selected));
+      let show = s.fade > 0.01 && (member || (isStar ? s.stars : s.names || focus));
       // Delante de la cámara (con la profundidad invertida, la z proyectada no lo dice).
       if (show) show = label.dir.dot(this.forward) > 0.05;
       if (show && s.sky.amount > 0.001) show = label.dir.x * s.sky.up.x + label.dir.y * s.sky.up.y + label.dir.z * s.sky.up.z > s.sky.dip + 0.02;
@@ -123,7 +129,10 @@ export class ConstellationLabels {
         if (show) show = !discs.some((d) => Math.hypot(d.x - px, d.y - py) < d.r);
         // Sin solaparse; la resaltada siempre.
         const box = { x0: x - 4, y0: y - 2, x1: x + label.width + 4, y1: y + label.height + 2 };
-        if (show && !focus && placed.some((p) => p.x0 < box.x1 && p.x1 > box.x0 && p.y0 < box.y1 && p.y1 > box.y0)) show = false;
+        // Sin pisarse (los de la figura van antes que el resto, así que mandan); el nombre de la
+        // seleccionada o la de debajo del ratón, siempre.
+        const named = focus && !member;
+        if (show && !named && placed.some((p) => p.x0 < box.x1 && p.x1 > box.x0 && p.y0 < box.y1 && p.y1 > box.y0)) show = false;
         if (show) placed.push(box);
       }
       if (show) {
@@ -135,6 +144,27 @@ export class ConstellationLabels {
       }
       if (label.el.hidden === show) label.el.hidden = !show;
       if (!isStar) label.el.classList.toggle('on', focus);
+    }
+  }
+
+  /** Las estrellas de la figura seleccionada, con su nombre o su letra (van antes que el resto). */
+  private setMembers(index: number): void {
+    for (const m of this.members) m.el.remove();
+    this.members = [];
+    this.membersOf = index;
+    const c = this.data.constellations[index];
+    if (!c) return;
+    // De la más brillante a la más débil: si no caben, se quedan las importantes.
+    for (const star of [...c.figure.stars].sort((a, b) => a[2] - b[2])) {
+      const text = figureStarLabel(star);
+      if (!text) continue;
+      const el = document.createElement('span');
+      const letter = !star[3] || text !== star[3];
+      el.className = `sky-label member${letter ? ' letter' : ''}`;
+      el.textContent = text;
+      this.layer.append(el);
+      const width = letter ? text.length * 9 + 6 : text.length * 7 + 8;
+      this.members.push({ el, dir: toVector(star[5], star[6]), index: -2, width, height: 14, dx: 9, dy: -7, transform: '' });
     }
   }
 }

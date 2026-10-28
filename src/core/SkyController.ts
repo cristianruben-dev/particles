@@ -38,15 +38,20 @@ export interface SkyFrame {
   sky: { amount: number; up: Vec3d; dip: number };
   /** Los cuerpos: sus discos tapan los nombres del cielo. */
   bodies: readonly { object3d: THREE.Object3D; screenRadiusPx: number }[];
+  /** Campo de visión vertical (grados): con zoom, las figuras se dibujan más llenas. */
+  fov: number;
+  /** Segundos de reloj real (para el centelleo). */
+  seconds: number;
 }
 
 export class SkyController {
   data: SkyData | null = null;
   /** Seleccionada (ficha abierta), −1 si ninguna. */
   selected = -1;
-  /** Bajo el cursor en el cielo y sobre un nombre. */
+  /** Bajo el cursor en el cielo, sobre un nombre y sobre una tarjeta del menú. */
   private pointerHover = -1;
   private labelHover = -1;
+  private menuHover = -1;
   private sky: ConstellationSky | null = null;
   private labels: ConstellationLabels | null = null;
   private readonly on: Record<Layer, boolean>;
@@ -97,6 +102,16 @@ export class SkyController {
     return this.data ? constellationAt(this.data, eclipticToEquatorial(sceneToEcl(dir))) : -1;
   }
 
+  /** Hay una constelación bajo el cursor (en el cielo): se puede pulsar. */
+  get hovering(): boolean {
+    return this.pointerHover >= 0;
+  }
+
+  /** Tarjeta del menú bajo el ratón: se ilumina en el cielo. */
+  setMenuHover(index: number): void {
+    this.menuHover = index;
+  }
+
   /** El cursor sobre el cielo (dirección de escena), o null fuera, arrastrando o sobre un cuerpo. */
   setPointer(dir: Vec3d | null): void {
     this.pointerHover = dir && this.interactive ? this.at(dir) : -1;
@@ -117,9 +132,9 @@ export class SkyController {
     return i >= 0 ? this.data.constellations[i].name : null;
   }
 
-  /** Centro de la constelación para mirarla (unitaria, ejes de escena). */
+  /** Centro de la figura para mirarla (unitaria, ejes de escena). */
   direction(index: number): Vec3d {
-    const [ra, dec] = this.data!.constellations[index].view;
+    const [ra, dec] = this.data!.constellations[index].figure.center;
     return eclToScene(equatorialToEcliptic(raDecToVector(ra * DEG, dec * DEG)));
   }
 
@@ -139,10 +154,11 @@ export class SkyController {
     if (!this.sky || !this.labels) return;
     const look = constellationLook;
     look.brightness.value = f.brightness;
-    const hover = this.labelHover >= 0 ? this.labelHover : this.pointerHover;
+    const hover = this.labelHover >= 0 ? this.labelHover : this.menuHover >= 0 ? this.menuHover : this.pointerHover;
     look.hover.value = hover;
     look.selected.value = this.selected;
-    this.sky.update(f.dt, this.on, f.visible);
+    const zoom = Math.min(1, Math.max(0, (42 - f.fov) / 12));
+    this.sky.update(f.dt, this.on, f.visible, zoom * zoom * (3 - 2 * zoom), f.seconds);
     this.labels.update(f.camera, f.width, f.height, {
       // De día (brillo 0,05) los nombres no se ven: se apagan antes que las líneas.
       fade: f.visible ? Math.min(1, Math.max(0, (f.brightness - 0.1) * 2)) : 0,
