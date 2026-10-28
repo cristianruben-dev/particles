@@ -6,3 +6,6 @@ dist
 # Texturas de alta resolución: se descargan a mano (ver docs/ASSETS.md)
 public/textures/**/*_8k.*
 public/textures/**/*_16k.*
+# Salvo el relieve de la Tierra (17,5 MB, como los .u16 de la Luna y Marte): sin él, la
+# superficie de la Tierra no carga en el despliegue.
+!public/textures/earth/height_8k.f16z

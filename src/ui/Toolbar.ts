@@ -1,14 +1,16 @@
 /**
- * Herramientas: escala, órbitas, nombres, modo de vuelo, ayuda, pantalla completa y
+ * Herramientas: escala, órbitas, nombres, modo de vuelo, sonido, ayuda, pantalla completa y
  * ocultar la interfaz.
  */
 import { el, iconButton } from './dom';
+import { icons } from './icons';
 
 export interface ToolActions {
   onSetScale(mode: 'compressed' | 'real'): void;
   onToggleOrbits(): void;
   onToggleLabels(): void;
   onToggleFly(): void;
+  onToggleSound(): void;
   onEvents(): void;
   onHelp(): void;
   onSettings(): void;
@@ -20,6 +22,7 @@ export interface ToolState {
   orbits: boolean;
   labels: boolean;
   flying: boolean;
+  sound: boolean;
 }
 
 export class Toolbar {
@@ -29,6 +32,7 @@ export class Toolbar {
   private readonly orbits: HTMLButtonElement;
   private readonly labels: HTMLButtonElement;
   private readonly fly: HTMLButtonElement;
+  private readonly sound: HTMLButtonElement;
   private last = '';
 
   constructor(actions: ToolActions) {
@@ -51,6 +55,7 @@ export class Toolbar {
     this.orbits = iconButton('orbits', 'Órbitas', actions.onToggleOrbits, 'O');
     this.labels = iconButton('labels', 'Nombres', actions.onToggleLabels, 'L');
     this.fly = iconButton('fly', 'Vuelo libre', actions.onToggleFly, 'V', 'ui-fly-toggle');
+    this.sound = iconButton('sound', 'Silenciar', actions.onToggleSound, 'M');
     const fullscreen = iconButton('fullscreen', 'Pantalla completa', () => {
       if (document.fullscreenElement) void document.exitFullscreen();
       else void document.documentElement.requestFullscreen?.().catch(() => undefined);
@@ -66,6 +71,7 @@ export class Toolbar {
       this.fly,
       el('span', 'ui-sep'),
       iconButton('eclipse', 'Eclipses y eventos', actions.onEvents, 'C'),
+      this.sound,
       iconButton('settings', 'Ajustes', actions.onSettings),
       iconButton('help', 'Ayuda y controles', actions.onHelp, '?'),
       iconButton('eye', 'Ocultar la interfaz', actions.onHideUi, 'U'),
@@ -74,7 +80,7 @@ export class Toolbar {
   }
 
   update(s: ToolState): void {
-    const key = `${s.scale}${s.orbits}${s.labels}${s.flying}`;
+    const key = `${s.scale}${s.orbits}${s.labels}${s.flying}${s.sound}`;
     if (key === this.last) return;
     this.last = key;
     this.compressed.classList.toggle('on', s.scale === 'compressed');
@@ -83,5 +89,10 @@ export class Toolbar {
     this.labels.classList.toggle('on', s.labels);
     this.fly.classList.toggle('on', s.flying);
     this.fly.dataset.tip = s.flying ? 'Volver a la órbita' : 'Vuelo libre';
+    const tip = s.sound ? 'Silenciar' : 'Activar el sonido';
+    this.sound.dataset.tip = tip;
+    this.sound.setAttribute('aria-label', tip);
+    this.sound.setAttribute('aria-pressed', String(s.sound));
+    this.sound.querySelector('svg')!.outerHTML = s.sound ? icons.sound : icons.muted;
   }
 }

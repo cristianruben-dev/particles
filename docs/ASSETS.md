@@ -19,7 +19,7 @@ Qué hace falta, de dónde sacarlo y con qué **licencia**. Antes de añadir un 
 
 | Cuerpo | Fuente | Licencia |
 |---|---|---|
-| Tierra | NASA SRTM / GEBCO (incluye batimetría) | Dominio público / GEBCO libre con atribución |
+| Tierra | Globo: GEBCO de NASA (8 bits). Superficie: NOAA ETOPO 2022 (float16) | Dominio público |
 | Luna | NASA SVS CGI Moon Kit — LOLA displacement | Dominio público |
 | Marte | USGS — MOLA MEGDR | Dominio público |
 | Mercurio | USGS — MESSENGER DEM | Dominio público |
@@ -60,6 +60,8 @@ No van en `public/`: son tablas en `src/astro/`.
 | Luna (60 + 60 términos de ELP-2000/82) | Meeus, *Astronomical Algorithms*, cap. 47, en la transcripción de la biblioteca `astronomia` (commenthol, Sonia Keys) | MIT (los coeficientes son datos de la teoría ELP-2000/82, de Chapront) |
 | ΔT (TT − UT) | IERS, valores medidos | Dominio público |
 | Elementos de los cometas | JPL Horizons (osculantes en el perihelio de cada aparición) y JPL Small-Body Database (M1, K1), consultados el 27–28/10/2026 | Dominio público (NASA/JPL) |
+| Apariciones de Halley, Encke y 67P de 1900 a 2100 (`src/astro/cometApparitions.ts`) | JPL Horizons: solución de cada aparición observada (`DES=…;CAP<año`) y su integración en los huecos; generado con `node scripts/build-comet-apparitions.mjs` el 28/10/2026 | Dominio público (NASA/JPL) |
+| Términos periódicos del polo de Neptuno y de Tritón | NAIF, kernel `pck00011.tpc` (IAU WGCCRE 2015) | Dominio público (NASA/JPL) |
 | TLE de la ISS (NORAD 25544) | CelesTrak (se renueva al arrancar si hay red) | Datos públicos de NORAD/18 SDS |
 | Medidas de la ISS | NASA — International Space Station Facts and Figures | Dominio público (NASA) |
 | Núcleos de los cometas | NASA y ESA (Giotto, Rosetta, Deep Impact) | Datos científicos publicados |
@@ -91,7 +93,7 @@ Descargados el 27/10/2026 y redimensionados con `sips` (macOS). Todo es dominio 
 | Archivo en `public/` | Origen | Crédito / licencia | Proceso |
 |---|---|---|---|
 | `textures/earth/albedo_4k.jpg` | https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/world.topo.bathy.200412.3x5400x2700.jpg | NASA Earth Observatory — Blue Marble Next Generation (topografía y batimetría, dic. 2004). Dominio público | 5400×2700 → 4096×2048 |
-| `textures/earth/height_4k.png` | https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73934/gebco_08_rev_elev_21600x10800.png | NASA Earth Observatory / GEBCO — elevación del terreno. Océano = 0, Everest ≈ 242, máximo 253 | 21600×10800 → 4096×2048, gris 8 bits |
+| `textures/earth/height_4k.png` | https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73934/gebco_08_rev_elev_21600x10800.png | NASA Earth Observatory / GEBCO — elevación del terreno. Océano = 0, Everest ≈ 242, máximo 253; lineal, 25 m por nivel (1 = 6.396 m, medido contra ETOPO 2022) | 21600×10800 → 4096×2048, gris 8 bits |
 | `textures/earth/night_3k.jpg` | https://eoimages.gsfc.nasa.gov/images/imagerecords/144000/144898/BlackMarble_2016_01deg.jpg | NASA Earth Observatory — Black Marble 2016. Dominio público | 3600×1800 sin cambios |
 | `textures/earth/clouds_2k.jpg` | https://eoimages.gsfc.nasa.gov/images/imagerecords/57000/57747/cloud_combined_2048.jpg | NASA Earth Observatory — Blue Marble, nubes. Dominio público | 2048×1024 sin cambios |
 | `textures/moon/albedo_2k.jpg` | https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004720/lroc_color_poles_2k.tif | NASA SVS — CGI Moon Kit (LRO/LROC). Dominio público | TIFF → JPEG 2048×1024 |
@@ -127,6 +129,12 @@ Dominio público (NASA, JPL, USGS, JHUAPL/SwRI). Las URL de `asc-pds-services.s3
 | `textures/moon/height_4k.u16` | https://svs.gsfc.nasa.gov/vis/a000000/a004700/a004720/ldem_16_uint.tif | NASA SVS — CGI Moon Kit (LRO/LOLA, 16 px/grado). Dominio público | `scripts/build-height-u16.py lola`: 5760×2880 → 4096×2048, uint16 little-endian, −10000 m → 0 y +10000 m → 65535 (0 m = 0,5) |
 | `textures/mars/height_4k.u16` | https://pds-geosciences.wustl.edu/mgs/mgs-m-mola-5-megdr-l3-v1/mgsl_300x/meg016/megt90n000eb.img | NASA PDS — MGS MOLA MEGDR (16 px/grado). Dominio público | `scripts/build-height-u16.py mola`: media vuelta y 5760×2880 → 4096×2048, uint16 little-endian, −8200 m → 0 y 21200 m → 65535 (0 m = 0,279, como el mapa del globo) |
 
-Sin archivo: Venus (cimas de nubes con ruido fractal, la superficie de Magellan no es visible), Saturno, Urano y Neptuno (perfil de bandas procedural) y los anillos (bordes publicados de los anillos C, B, A, F y del de Urano, en `bodies/presets.ts`).
+Sin archivo: Venus (cimas de nubes con ruido fractal, la superficie de Magellan no es visible), Saturno, Urano y Neptuno (perfil de bandas procedural; Saturno, con colores tomados de las imágenes de Cassini, el hexágono polar y tormentas) y los anillos (bordes publicados de los anillos C, B, A, F y del de Urano, en `bodies/presets.ts`). El sonido también es procedural (Web Audio): no hay archivos de audio.
+
+### Fase 4 (28/10/2026)
+
+| Archivo en `public/` | Origen | Crédito / licencia | Proceso |
+|---|---|---|---|
+| `textures/earth/height_8k.f16z` | NOAA NCEI — ETOPO 2022, 60″, elevación de la superficie (`ETOPO_2022_v1_60s_N90W180_surface.nc`), leído por OPeNDAP cada 2′ (10 bandas, ~233 MB, no se guardan): https://www.ngdc.noaa.gov/thredds/dodsC/global/ETOPO2022/60s/60s_surface_elev_netcdf/ETOPO_2022_v1_60s_N90W180_surface.nc | NOAA National Centers for Environmental Information (2022), ETOPO 2022 15 Arc-Second Global Relief Model, doi:10.25921/fd45-gt74. Dominio público (Gobierno de EE. UU.) | `python3 -I scripts/build-earth-height.py <bandas> public/textures/earth/height_4k.png <salida>`: filtro triangular a 8192×4096, océano = 0 (fondo recortado a −100 m antes de filtrar), escala del mapa de 8 bits del globo ajustada con los dos (1 = 6.396 m), float16 little-endian comprimido con zlib (17,5 MB). Comprobado: Everest, Mont Blanc, Kilimanjaro, Aconcagua y Denali a menos de 0,25° de su sitio (este y lon 0° bien) |
 
 Datos de referencia (no se guardan): polos y meridianos de la IAU desde el kernel de NAIF `pck00011.tpc` (https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc), elementos medios de las lunas de https://ssd.jpl.nasa.gov/sats/elem/ y posiciones de verificación de la API de JPL Horizons.

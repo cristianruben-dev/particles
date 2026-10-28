@@ -1,12 +1,14 @@
 /**
- * El Sol: granulación animada, oscurecimiento del limbo y corona. Ver docs/ARQUITECTURA.md §8.
- * Todo es emisivo y en HDR: es la fuente principal del bloom.
+ * El Sol: granulación animada, oscurecimiento del limbo, corona y protuberancias. Ver
+ * docs/ARQUITECTURA.md §8. Todo es emisivo y en HDR: es la fuente principal del bloom.
  *
  * El ruido de la granulación (Worley + fractal) es caro: se calcula una vez por partícula
  * y frame en una pasada compute, no por vértice ni por píxel.
  */
 import {
   Fn,
+  cos,
+  cross,
   float,
   fract,
   instanceIndex,
@@ -15,6 +17,8 @@ import {
   mx_fractal_noise_float,
   mx_worley_noise_float,
   pow,
+  sin,
+  smoothstep,
   uniform,
   vec3,
   vec4,
@@ -42,10 +46,14 @@ import { DetailTier, type TierKind } from './DetailTier';
 export const sunLook = {
   brightness: uniform(1.9),
   corona: uniform(0.03),
+  prominences: uniform(0.8),
 };
 
 const SURFACE_COUNT = 320_000;
 const CORONA_COUNT = 70_000;
+/** Protuberancias: arcos y partículas por arco. */
+const LOOPS = 14;
+const LOOP_COUNT = 3_000;
 
 export class Sun extends BaseBody {
   /** El Sol siempre se ve grande: un solo nivel, completo. */
@@ -66,6 +74,7 @@ export class Sun extends BaseBody {
     ]);
     tier.addField(this.createSurface(tier, surface.directions), true);
     tier.addField(this.createCorona(tier, corona.directions), false);
+    tier.addField(this.createProminences(tier), false);
     tier.total = SURFACE_COUNT;
     return tier;
   }
@@ -158,5 +167,71 @@ export class Sun extends BaseBody {
     return field;
   }
 
-  // TODO(fase 4): protuberancias como partículas que siguen arcos magnéticos.
+  /**
+   * Protuberancias: plasma que sigue arcos magnéticos anclados en dos puntos de la superficie
+   * (en latitudes activas) y cae de una pata a la otra, en hilos que se retuercen. Todo es
+   * función del tiempo y barato (un nlerp y unos senos): va en el vertex shader, sin estado.
+   * Rojas como en H-alfa y en HDR, así que el bloom las hace brillar sobre el limbo.
+   */
+  private createProminences(tier: DetailTier): ParticleField {
+    const count = LOOPS * LOOP_COUNT;
+    // mulberry32: el mismo Sol en cada visita.
+    let seed = 20261028;
+    const random = () => {
+      seed = (seed + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(seed ^ (seed >>> 15), seed | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    // Por partícula: (pata A, fase), (pata B, altura del arco) y (hilo, grosor, velocidad, brillo).
+    const footA = new Float32Array(count * 4), footB = new Float32Array(count * 4), strand = new Float32Array(count * 4);
+    for (let k = 0; k < LOOPS; k++) {
+      // Centro en latitudes activas (±8–35°), patas separadas 4–14° en una dirección cualquiera.
+      const lat = (8 + 27 * random()) * (random() < 0.5 ? -1 : 1) * (Math.PI / 180);
+      const lon = random() * Math.PI * 2;
+      const c = [Math.cos(lat) * Math.cos(lon), Math.sin(lat), -Math.cos(lat) * Math.sin(lon)];
+      const east = [-Math.sin(lon), 0, -Math.cos(lon)];
+      const north = [-Math.sin(lat) * Math.cos(lon), Math.cos(lat), Math.sin(lat) * Math.sin(lon)];
+      const along = random() * Math.PI * 2, half = (2 + 5 * random()) * (Math.PI / 180);
+      const t = [0, 1, 2].map((i) => east[i] * Math.cos(along) + north[i] * Math.sin(along));
+      const a = [0, 1, 2].map((i) => c[i] - t[i] * half), b = [0, 1, 2].map((i) => c[i] + t[i] * half);
+      const height = 0.06 + 0.22 * random() ** 1.5;
+      const speed = (0.015 + 0.03 * random()) * (random() < 0.5 ? -1 : 1);
+      const gain = 0.5 + random();
+      for (let j = 0; j < LOOP_COUNT; j++) {
+        const i = (k * LOOP_COUNT + j) * 4;
+        footA.set([a[0], a[1], a[2], random()], i);
+        footB.set([b[0], b[1], b[2], height], i);
+        // Hilo: ángulo alrededor del eje del arco y distancia al eje (más densos en el centro).
+        strand.set([random() * Math.PI * 2, random() ** 2, speed * (0.8 + 0.4 * random()), gain], i);
+      }
+    }
+    const A = tier.buffer(footA).toAttribute(), B = tier.buffer(footB).toAttribute(), S = tier.buffer(strand).toAttribute();
+    const t = this.animTime;
+
+    // Posición a lo largo del arco (0 = pata A, 1 = pata B), que avanza con el tiempo.
+    const s = fract(A.w.add(t.mul(S.z)));
+    const base = mix(A.xyz, B.xyz, s).normalize();
+    const lift = sin(s.mul(Math.PI));
+    const axis = base.mul(float(1).add(B.w.mul(lift)));
+    // Hilos retorcidos alrededor del eje, más gruesos arriba (el plasma se expande).
+    const tangent = B.xyz.sub(A.xyz).normalize();
+    const side = cross(base, tangent);
+    const twist = S.x.add(s.mul(9));
+    const radius = S.y.mul(float(0.01).add(lift.mul(0.03)));
+    const center = axis.add(side.mul(cos(twist).mul(radius))).add(base.mul(sin(twist).mul(radius)));
+
+    const field = new ParticleField(count, 'additive');
+    const material = field.material;
+    material.positionNode = center;
+    material.scaleNode = particleScale({ center, size: float(0.007), minPixels: 1.6, objectScale: this.objectScale });
+    // Más brillo arriba del arco; las patas se funden con la superficie. Se ven sobre el limbo:
+    // delante del disco (ya muy brillante) apenas suman, como los filamentos.
+    const fade = smoothstep(0, 0.12, s).mul(smoothstep(1, 0.88, s));
+    const limb = mix(float(0.15), float(1), smoothstep(0.9, 0.4, worldNormal(base).dot(viewDirection(center)).abs()));
+    const intensity = S.w.mul(fade).mul(lift.mul(0.6).add(0.4)).mul(limb).mul(sunLook.prominences).mul(tier.appear);
+    material.colorNode = vec4(vec3(1.0, 0.24, 0.16).mul(intensity).mul(handoff.solar), 1);
+    material.opacityNode = softDisc();
+    return field;
+  }
 }

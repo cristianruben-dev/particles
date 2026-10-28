@@ -1635,7 +1635,9 @@ kbd {
 
 /* ───────────── Pantallas medianas y móviles ───────────── */
 
-@media (max-width: 1240px) {
+/* En una fila hacen falta ~1.600 px (tiempo 330 + navegador 680 + herramientas 525 + huecos):
+   por debajo, el navegador sube a su propia fila (con 1.240 la barra se salía por la derecha). */
+@media (max-width: 1640px) {
   .ui-bottom {
     grid-template-columns: 1fr max-content;
     grid-template-areas:

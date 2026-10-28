@@ -6,12 +6,13 @@
  *   cada uno (consultados el 28/10/2026), heliocéntricos y en la eclíptica J2000: q, e, i, Ω,
  *   ω y el paso por el perihelio. Con los de la Small-Body Database (otra época) el Halley de
  *   1986 se desviaba 5 millones de km y el Hale-Bopp de 1997, 10. Sin perturbaciones de los
- *   planetas: en otras vueltas (el Halley de 2061) el paso puede desviarse días o semanas.
+ *   planetas entre perihelios: los periódicos llevan los elementos de cada vuelta.
  * - Magnitud total (M1, K1): JPL Small-Body Database.
  * - Órbitas casi parabólicas (e = 0,999) e hiperbólicas (Tsuchinshan-ATLAS, e = 1,0001; 3I/ATLAS,
  *   e = 6,1): Kepler con Newton acotado (siempre converge) en cada tipo de cónica.
  * - Actividad: la distancia al Sol y los parámetros de magnitud total de JPL (M1, K1).
  */
+import { COMET_APPARITIONS } from './cometApparitions';
 import type { Vec3d } from './frames';
 import { AU_KM, DEG } from './units';
 
@@ -44,14 +45,12 @@ export const COMET_ELEMENTS: Record<CometId, CometElements> = {
 };
 
 /**
- * Otras apariciones, con sus elementos osculantes de Horizons: con dos cuerpos desde 1986 el
- * Halley volvía en febrero de 2062 en vez del 28 de julio de 2061 (los planetas lo frenan).
- * Cada fecha usa la aparición con el perihelio más cercano (`cometElementsAt`).
+ * Otras apariciones de los periódicos (Halley, Encke y 67P, de 1900 a 2100), con sus elementos
+ * osculantes de Horizons en cada perihelio (`cometApparitions.ts`, generado): con dos cuerpos
+ * desde 1986 el Halley volvía en febrero de 2062 en vez del 28 de julio de 2061 (los planetas
+ * lo frenan). Cada fecha usa la aparición con el perihelio más cercano (`cometElementsAt`).
  */
-const APPARITIONS: Partial<Record<CometId, Omit<CometElements, 'M1' | 'K1'>[]>> = {
-  halley: [{ q: 0.5927819455899616, e: 0.966576767121308, i: 161.9651212677304, node: 59.39231569448478, peri: 112.0521038201326, tpJd: 2474034.220124185 }],
-  churyumov: [{ q: 1.213194048826586, e: 0.6492387129557103, i: 3.865720819578515, node: 36.27099267954888, peri: 22.23628223347253, tpJd: 2461871.130040667 }],
-};
+const APPARITIONS = COMET_APPARITIONS;
 
 /** Los elementos de la aparición con el perihelio más cercano a la fecha. */
 export function cometElementsAt(id: CometId, ttMs: number): CometElements {

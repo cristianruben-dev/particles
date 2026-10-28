@@ -21,4 +21,8 @@ Sistema solar navegable hecho de partículas (Three.js WebGPU + TSL, TypeScript,
 - Cometas: coma y colas se colocan respecto al núcleo con `distanceNode` del propio cometa (su `radiusKm` es el de referencia de la coma, §4.3).
 - `satellite.js` se importa desde `astro/sgp4.ts`, no del paquete: su índice arrastra un WebAssembly que rompe el build.
 - Capa cósmica (§14): sus posiciones son km verdaderos respecto al Sol y nunca se mezclan con las de la escena solar. A la GPU van en años luz con `ScaleSystem.cosmic`, restadas de la cámara en float64 en la CPU. La cámara cósmica sale de `OrbitMode.cameraKm`, no de la posición de escena (más allá del relevo se queda en el borde). Relevo y zoom, por la distancia verdadera al Sol (`core/Handoff.ts`), nunca por unidades de escena. Si el panel del navegador mide 0×0, darle tamaño con `resize_window` antes de avanzar frames.
+- TSL: un `uniformArray` de vec3 leído en un compute dio NaN; para datos por hueco o por chunk en un compute, un buffer pequeño (`StorageInstancedBufferAttribute` + `needsUpdate`).
+- El tone mapping va a mano (`renderOutput`) y después el tramado (`postfx/Pipeline.ts`): sin él, el halo del Sol sale en anillos de 8 bits.
+- `src/astro/cometApparitions.ts` se genera con `node scripts/build-comet-apparitions.mjs` (JPL Horizons): no editarlo a mano.
+- Sonido (§13): procedural en `audio/` (Web Audio), arranca en el primer gesto del usuario; cada voz con su ganancia a 0 cuando no suena (un LFO no puede sonar solo).
 - Al terminar una fase, marcarla en `docs/PLAN.md`.

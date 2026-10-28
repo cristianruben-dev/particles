@@ -32,7 +32,7 @@ export function positionRelativeToParent(body: BodyData, timeMs: number): Vec3d 
   }
   if (body.orbit) return heliocentricPosition(body.orbit, tt);
   if (body.comet) return cometPosition(cometElementsAt(body.comet, tt), tt);
-  if (body.satellite && body.parent) return satellitePosition(body.satellite, BODIES[body.parent], tt);
+  if (body.satellite && body.parent) return satellitePosition(body.satellite, BODIES[body.parent], tt, body);
   return { x: 0, y: 0, z: 0 };
 }
 

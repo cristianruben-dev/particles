@@ -7,13 +7,14 @@
 import type { BodyData, SatelliteElements } from './bodies';
 import type { Vec3d } from './frames';
 import { solveKepler } from './kepler';
-import { bodyFrame, cross3d, planeFrame } from './orientation';
+import { bodyFrame, cross3d, planeFrame, primeMeridian } from './orientation';
 import { DEG, daysSinceJ2000 } from './units';
 
 const DAYS_PER_YEAR = 365.25;
 
-/** Posición relativa al planeta (eclíptica J2000, km). */
-export function satellitePosition(s: SatelliteElements, parent: BodyData, timeMs: number): Vec3d {
+/** Posición relativa al planeta (eclíptica J2000, km). `moon` = datos de la propia luna. */
+export function satellitePosition(s: SatelliteElements, parent: BodyData, timeMs: number, moon?: BodyData): Vec3d {
+  if (s.fromRotation && moon) return positionFromRotation(s, moon, timeMs);
   const d = daysSinceJ2000(timeMs);
   const ref = s.laplacePole ? planeFrame(s.laplacePole.ra, s.laplacePole.dec) : bodyFrame(parent.pole, timeMs);
 
@@ -45,5 +46,22 @@ export function satellitePosition(s: SatelliteElements, parent: BodyData, timeMs
     x: x * q.x + y * b.x + z * p.x,
     y: x * q.y + y * b.y + z * p.y,
     z: x * q.z + y * b.z + z * p.z,
+  };
+}
+
+/**
+ * Luna síncrona sin oblicuidad (Tritón): órbita circular en su propio ecuador, con el planeta
+ * en su meridiano principal (más un desfase). La orientación IAU ya trae la precesión del plano.
+ */
+function positionFromRotation(s: SatelliteElements, moon: BodyData, timeMs: number): Vec3d {
+  const f = bodyFrame(moon.pole, timeMs);
+  const w = primeMeridian(moon.pole, timeMs) + s.fromRotation!.meridianOffset * DEG;
+  const c = Math.cos(w), sn = Math.sin(w);
+  const b = cross3d(f.pole, f.node);
+  // Del planeta a la luna: lo contrario de la dirección del meridiano principal.
+  return {
+    x: -s.a * (c * f.node.x + sn * b.x),
+    y: -s.a * (c * f.node.y + sn * b.y),
+    z: -s.a * (c * f.node.z + sn * b.z),
   };
 }

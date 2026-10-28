@@ -9,8 +9,8 @@ import type { BodyData } from '../astro/bodies';
 import type { Vec3d } from '../astro/frames';
 import { config } from '../config';
 import { bakeSphere, type BakeTexture } from '../particles/bake';
-import { Disturbance } from '../particles/Disturbance';
-import { ball, ballDepth, ballSprite, frontFacing, hardDisc, viewDirection, worldNormal, type Vec3Node } from '../particles/nodes';
+import { Disturbance, disturbanceLook, type LocalRay } from '../particles/Disturbance';
+import { ball, ballDepth, ballSprite, frontFacing, hardDisc, pixelAngle, viewDirection, worldNormal, type Vec3Node } from '../particles/nodes';
 import { detailFraction } from '../particles/LodManager';
 import { ParticleField } from '../particles/ParticleField';
 import { Surface } from '../surface/Surface';
@@ -71,11 +71,12 @@ export class RockyPlanet extends BaseBody {
       ? {
           relief: preset.surface.relief,
           reference: preset.surface.reference ?? preset.heightReference,
-          waterBelow: preset.waterBelow ?? -1,
+          waterBelow: preset.surface.waterBelow ?? preset.waterBelow ?? -1,
           roughness: preset.surface.roughness,
           radiusKm: data.radiusKm,
         }
       : null;
+    this.object3d.add(occluder(preset));
     this.start();
   }
 
@@ -166,7 +167,8 @@ export class RockyPlanet extends BaseBody {
       tier.roots.push({ object: clouds.group, spin: true });
       tier.fields.push({ field: clouds.field, scale: 1 });
       tier.updates.push((ctx) => {
-        clouds.update(ctx);
+        // La turbulencia solo se calcula si las nubes se ven y el planeta no es pequeño en pantalla.
+        clouds.update(ctx, tier.visible && this.cloudFade.value > 0.001 && this.radiusPx > 150);
         clouds.disturbance?.update(ctx.renderer, this.localPointerRay(ctx, clouds.field.object), ctx.dt, ctx.nowSeconds);
       });
     }
@@ -338,6 +340,8 @@ export class RockyPlanet extends BaseBody {
       this.surface.update(ctx.renderer, {
         cameraLocal,
         dt: ctx.dt,
+        now: ctx.nowSeconds,
+        pointer: this.surfacePointerRay(ctx, cameraLocal),
         inFrustum: (center, radius) => {
           sphere.center.copy(center);
           this.spin.localToWorld(sphere.center);
@@ -348,6 +352,42 @@ export class RockyPlanet extends BaseBody {
     }
     // Con la superficie ya fundida del todo, el globo sobra (sus puntos son de decenas de km).
     if (this.globe) this.globe.object.visible = !this.surface?.opaque;
+  }
+
+  /**
+   * Rayo del cursor para la superficie, en el espacio del grupo que gira (radios): el radio de
+   * influencia se mide donde el rayo toca el suelo (el del globo usa la esfera del cuerpo, y a
+   * ras de suelo la cámara está dentro de ella).
+   */
+  private surfacePointerRay(ctx: FrameContext, cameraLocal: THREE.Vector3): (LocalRay & { hit: THREE.Vector3 }) | null {
+    const surface = this.surface;
+    if (!ctx.pointer || disturbanceLook.strength.value <= 0 || !surface) return null;
+    const direction = ctx.pointer.clone().transformDirection(this.spin.matrixWorld.clone().invert());
+    // Marcha por el rayo con pasos de media altitud sobre el terreno (la misma función que se
+    // dibuja) y bisección al cruzarlo: de canto, el suelo de debajo de la cámara no sirve.
+    const hit = new THREE.Vector3();
+    const above = (t: number) => {
+      hit.copy(direction).multiplyScalar(t).add(cameraLocal);
+      return hit.length() - 1 - surface.heightAt(hit.clone().normalize());
+    };
+    let t0 = 0, f0 = above(0);
+    if (f0 <= 0) return null;
+    let t1 = 0;
+    for (let k = 0; ; k++) {
+      if (k === 200 || t0 > 0.2) return null;
+      t1 = t0 + Math.max(f0 * 0.5, 1e-9);
+      const f1 = above(t1);
+      if (f1 <= 0) break;
+      t0 = t1;
+      f0 = f1;
+    }
+    for (let k = 0; k < 30; k++) {
+      const tm = (t0 + t1) / 2;
+      if (above(tm) > 0) t0 = tm;
+      else t1 = tm;
+    }
+    above(t1);
+    return { origin: cameraLocal.clone(), direction, radius: disturbanceLook.radiusPx * pixelAngle.value * t1, gain: 1, hit };
   }
 
   /**
@@ -370,9 +410,12 @@ export class RockyPlanet extends BaseBody {
     const eclipse = this.shadow ? this.shadow.lightAt({ x: up.x, y: up.y, z: up.z }) : 1;
     const day = smooth(sunHeight, -0.15, 0.25) * eclipse;
 
-    // Suelo: el albedo bajo la cámara, oscurecido.
+    // Suelo: el albedo bajo la cámara, oscurecido. A ras de suelo, oscuro (cada punto se ve
+    // suelto); más arriba cada punto es mucho terreno y el hueco, el suelo que se ve detrás: con
+    // el mismo tono oscuro, a 150 km de la Luna salían puntos claros sobre negro.
     const ground = this.groundColor(up);
-    sky.ground.copy(ground).multiplyScalar(0.05 + 0.3 * day);
+    const fill = 0.3 + 0.4 * smooth(altitude, 0.002, 0.05);
+    sky.ground.copy(ground).multiplyScalar(0.05 + fill * day);
     const air = this.preset.atmosphere;
     if (air) {
       const thick = 1 - smooth(altitude, air.thickness * 0.15, air.thickness * 1.2);
@@ -408,4 +451,19 @@ export function hashString(s: string): number {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619);
   return h >>> 0;
+}
+
+/**
+ * Esfera que solo escribe profundidad, por debajo del suelo más hondo: entre las partículas hay
+ * aire y, desde el lado de noche (puntos negros), se veía a través del planeta lo que hay
+ * detrás, como el Sol. Así el fondo de los huecos es el del espacio, no lo que tapa el cuerpo.
+ */
+function occluder(p: RockyPreset): THREE.Mesh {
+  const globe = p.reliefScale * (0 - p.heightReference);
+  const ground = p.surface ? p.surface.relief * (0 - (p.surface.reference ?? p.heightReference)) : 0;
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(1 + Math.min(0, globe, ground) - 0.01, 48, 24),
+    new THREE.MeshBasicNodeMaterial({ colorWrite: false }),
+  );
+  return mesh;
 }

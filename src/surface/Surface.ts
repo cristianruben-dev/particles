@@ -10,6 +10,11 @@
  * - Al dividir, el padre sigue dibujándose y se funde mientras aparecen los hijos.
  * - Precisión: todo lo que depende de la posición absoluta (mapa, ruido grueso) se evalúa
  *   respecto al centro del chunk, precalculado en float64 en la CPU (§7.2).
+ * - La última octava fina de cada chunk se funde con la densidad dibujada (que depende de la
+ *   distancia, no del nivel): en el borde entre dos niveles, el más fino aún no la tiene y el
+ *   relieve y la luz no cambian de textura.
+ * - Ratón (§6.4): solo los chunks que tiene debajo el cursor llevan perturbación, en unos pocos
+ *   huecos con su propio estado (no todo el pool: serían 32 B × millones de partículas).
  */
 import * as THREE from 'three/webgpu';
 import {
@@ -21,6 +26,7 @@ import {
   fract,
   hash,
   instanceIndex,
+  int,
   max,
   mix,
   modelViewMatrix,
@@ -36,10 +42,12 @@ import {
   transformDirection,
   uint,
   uniform,
+  vec2,
   vec3,
   vec4,
 } from 'three/tsl';
 import { rockyLook } from '../bodies/RockyPlanet';
+import { Disturbance, type LocalRay } from '../particles/Disturbance';
 import { ball, ballDepth, ballSprite, hardDisc, pixelAngle, type FloatNode, type Vec3Node } from '../particles/nodes';
 import { config } from '../config';
 import { freeStorageBuffers } from '../particles/gpu';
@@ -94,6 +102,31 @@ const FADE_SECONDS = 0.35;
 const targetPx = uniform(particleLook.spacingPx);
 /** Octava 2D más fina posible (profundidad máxima + log2 N). */
 const MAX_OCTAVE = config.surfaceMaxDepth + Math.floor(Math.log2(N));
+/**
+ * Fracción dibujada (§7.3) entre la que la última octava fina entra del todo: con menos
+ * partículas, su longitud de onda (dos separaciones del chunk completo) ya no se resuelve.
+ */
+const LAST_OCTAVE_FADE: [number, number] = [0.4, 1];
+/**
+ * Chunks con perturbación del ratón a la vez (32 × 6.400 partículas, 6,5 MB) y segundos que la
+ * conservan tras irse el cursor. Con 8, al barrer el suelo se llenaban en un par de posiciones.
+ */
+const MOUSE_SLOTS = 32;
+const MOUSE_SETTLE = 4;
+
+/** Normal unitaria → 2 floats (octaédrica) y vuelta: caben dos normales en un vec4. */
+const octEncode = (n: Vec3Node) => {
+  const p = n.xy.div(n.x.abs().add(n.y.abs()).add(n.z.abs()));
+  const sx = p.x.greaterThanEqual(0).select(float(1), float(-1)), sy = p.y.greaterThanEqual(0).select(float(1), float(-1));
+  const folded = vec2(float(1).sub(p.y.abs()).mul(sx), float(1).sub(p.x.abs()).mul(sy));
+  return n.z.greaterThanEqual(0).select(p, folded);
+};
+const octDecode = (e: THREE.Node<'vec2'>): Vec3Node => {
+  const z = float(1).sub(e.x.abs()).sub(e.y.abs());
+  const t = max(z.negate(), 0);
+  const x = e.x.add(e.x.greaterThanEqual(0).select(t.negate(), t)), y = e.y.add(e.y.greaterThanEqual(0).select(t.negate(), t));
+  return normalize(vec3(x, y, z));
+};
 
 /** La tesela es la misma para todas las superficies: se calcula una vez (~40 ms). */
 let tileCache: Float32Array | null = null;
@@ -135,6 +168,10 @@ export interface SurfaceView {
   /** ¿Toca el frustum la esfera (centro local, radio local)? */
   inFrustum: (center: THREE.Vector3, radius: number) => boolean;
   dt: number;
+  /** Segundos (reloj real). */
+  now: number;
+  /** Rayo del cursor en el espacio del grupo que gira (radios) y dónde toca el suelo, o null. */
+  pointer: (LocalRay & { hit: THREE.Vector3 }) | null;
 }
 
 export class Surface {
@@ -162,6 +199,15 @@ export class Surface {
   private readonly generate: THREE.ComputeNode;
   private readonly material: THREE.SpriteNodeMaterial;
   private pendingJobs: { node: QuadNode; chunk: SurfaceChunk }[] = [];
+  /** Ratón: un muelle por partícula en `MOUSE_SLOTS` chunks. */
+  private readonly mouse: Disturbance;
+  /** Por hueco: (origen del rayo en el chunk, primera partícula en el pool) y (vertical, 0). */
+  private readonly mouseData = new THREE.StorageInstancedBufferAttribute(new Float32Array(MOUSE_SLOTS * 8), 4);
+  private readonly mouseSlots: { chunk: SurfaceChunk | null; until: number }[] =
+    Array.from({ length: MOUSE_SLOTS }, () => ({ chunk: null, until: 0 }));
+  /** Huecos que se reutilizan sin haberse asentado: su estado se pone a cero (un bit por hueco). */
+  private readonly mouseClear = uniform(0, 'uint');
+  private readonly mouseReset: THREE.ComputeNode;
 
   constructor(
     readonly terrain: TerrainData,
@@ -176,6 +222,23 @@ export class Surface {
     this.jobData = new Float32Array(JOBS * JOB_STRIDE * 4);
     this.jobs = new THREE.StorageInstancedBufferAttribute(this.jobData, 4);
     this.tile = new THREE.StorageInstancedBufferAttribute(blueTile(), 4);
+    const offsets = this.pool.node(this.pool.offset, true);
+    const slots = storage(this.mouseData, 'vec4', MOUSE_SLOTS * 2).toReadOnly();
+    const slotOf = (i: typeof instanceIndex) => i.div(uint(NN));
+    this.mouse = new Disturbance(MOUSE_SLOTS * NN, (i) => {
+      const k = slotOf(i);
+      return offsets.element(uint(slots.element(k.mul(uint(2))).w).add(i.sub(k.mul(uint(NN))))).xyz;
+    }, {
+      origin: (i) => slots.element(slotOf(i).mul(uint(2))).xyz,
+      outward: (i) => slots.element(slotOf(i).mul(uint(2)).add(uint(1))).xyz,
+    });
+    const [mouseOffset, mouseVelocity] = this.mouse.resources.buffers;
+    this.mouseReset = Fn(() => {
+      const clear = this.mouseClear.shiftRight(slotOf(instanceIndex)).bitAnd(uint(1)).equal(uint(1));
+      const off = mouseOffset.element(instanceIndex), vel = mouseVelocity.element(instanceIndex);
+      off.assign(clear.select(vec4(0), off));
+      vel.assign(clear.select(vec4(0), vel));
+    })().compute(MOUSE_SLOTS * NN);
     this.generate = this.createGenerator(look);
     this.material = this.createMaterial(look);
   }
@@ -320,6 +383,73 @@ export class Surface {
       c.setDensity(fraction);
     }
     this.group.visible = this.complete;
+    this.updateMouse(renderer, view);
+  }
+
+  /**
+   * Ratón: los chunks cerca del punto del suelo bajo el cursor (los más cercanos primero) toman
+   * un hueco libre; lo conservan mientras el cursor siga encima y unos segundos después, hasta
+   * que sus partículas vuelven a su sitio.
+   */
+  private updateMouse(renderer: THREE.WebGPURenderer, view: SurfaceView): void {
+    const ray = this.opaque ? view.pointer : null;
+    const now = view.now;
+    let clear = 0;
+    if (ray) {
+      // Los chunks que toca el círculo del cursor sobre el suelo (radio del centro a la esquina).
+      const hits: { chunk: SurfaceChunk; along: number }[] = [];
+      for (const c of this.chunks) {
+        if (c.retiring || c.appear < 0.5) continue;
+        const d = c.object.position.distanceTo(ray.hit);
+        if (d < ray.radius + c.node.halfAngle * 1.45) hits.push({ chunk: c, along: d });
+      }
+      hits.sort((a, b) => a.along - b.along);
+      const taken = new Set(hits.map((h) => h.chunk));
+      for (const { chunk } of hits.slice(0, MOUSE_SLOTS)) {
+        let k = this.mouseSlots.findIndex((s) => s.chunk === chunk);
+        // Primero un hueco libre ya asentado; si no, el que lleve más tiempo sin cursor, con su
+        // estado a cero (si no, el chunk nuevo heredaría los desplazamientos del anterior).
+        if (k < 0) k = this.mouseSlots.findIndex((s) => !s.chunk && s.until < now);
+        if (k < 0) {
+          let oldest = Infinity;
+          this.mouseSlots.forEach((s, j) => {
+            if (s.chunk && taken.has(s.chunk)) return;
+            if (s.until < oldest) [oldest, k] = [s.until, j];
+          });
+          if (k < 0) continue;
+          const previous = this.mouseSlots[k].chunk;
+          if (previous) previous.object.userData.mouseSlot = -1;
+          clear |= 1 << k;
+        }
+        const slot = this.mouseSlots[k];
+        slot.chunk = chunk;
+        slot.until = now + MOUSE_SETTLE;
+        chunk.object.userData.mouseSlot = k;
+      }
+    }
+    if (clear) {
+      this.mouseClear.value = clear >>> 0;
+      renderer.compute(this.mouseReset);
+    }
+    let active = false;
+    this.mouseSlots.forEach((slot, k) => {
+      const chunk = slot.chunk;
+      if (!chunk) return;
+      if (slot.until < now || !this.chunks.has(chunk)) {
+        chunk.object.userData.mouseSlot = -1;
+        slot.chunk = null;
+        return;
+      }
+      active = true;
+      // Rayo y vertical en el espacio del chunk, restados en float64.
+      const d = this.mouseData.array as Float32Array, o = k * 8;
+      const c = chunk.object.position, up = chunk.object.userData.up as THREE.Vector3;
+      if (ray) d.set([ray.origin.x - c.x, ray.origin.y - c.y, ray.origin.z - c.z], o);
+      d[o + 3] = chunk.slot * NN;
+      d.set([up.x, up.y, up.z, 0], o + 4);
+    });
+    this.mouseData.needsUpdate = true;
+    if (active || ray) this.mouse.update(renderer, ray && { ...ray, gain: 1 }, view.dt, now);
   }
 
   /** Empieza a desvanecerse (se sube por encima del relevo); `faded` dice cuándo se puede soltar. */
@@ -344,6 +474,7 @@ export class Surface {
     // Centro del chunk sobre el terreno (float64).
     const r = 1 + terrainHeightCpu(x, y, z, this.terrain.height, this.params, lastFaceOctave(node.depth, N));
     chunk.object.position.set(x * r, y * r, z * r);
+    chunk.object.userData.up = new THREE.Vector3(x, y, z).normalize();
     node.chunk = chunk;
     this.chunks.add(chunk);
     this.group.add(chunk.object);
@@ -370,6 +501,9 @@ export class Surface {
 
   private free(chunk: SurfaceChunk): void {
     if (!this.chunks.delete(chunk)) return;
+    // Su hueco del ratón no se reutiliza hasta que se asiente.
+    const slot = this.mouseSlots.find((s) => s.chunk === chunk);
+    if (slot) slot.chunk = null;
     chunk.object.removeFromParent();
     this.pool.release(chunk.slot);
   }
@@ -447,10 +581,16 @@ export class Surface {
       // necesita (densidad continua, §7.3). Se probaron una rejilla con jitter y la secuencia
       // R2 (guardan filas que, con el suelo visto de canto, se ven como rayas) y el azar
       // (grumos y huecos, como ruido de televisión).
+      // Además del desplazamiento, cada chunk gira o refleja la tesela (8 simetrías del cuadrado,
+      // que la conservan: es toroidal): con solo desplazarla se veía un mosaico en algunos ángulos.
       const fj = float(j);
       const tile = tileIn.element(j);
-      const a0 = fract(tile.x.add(hash(seed.mul(1.7)))).sub(0.5).toVar();
-      const b0 = fract(tile.y.add(hash(seed.mul(3.1).add(0.5)))).sub(0.5).toVar();
+      const sym = int(hash(seed.mul(5.9).add(0.25)).mul(7.999)).toVar();
+      const swap = sym.bitAnd(int(1)).equal(int(1)), flipU = sym.bitAnd(int(2)).equal(int(2)), flipV = sym.bitAnd(int(4)).equal(int(4));
+      const su0 = swap.select(tile.y, tile.x), sv0 = swap.select(tile.x, tile.y);
+      const su = flipU.select(float(1).sub(su0), su0), sv = flipV.select(float(1).sub(sv0), sv0);
+      const a0 = fract(su.add(hash(seed.mul(1.7)))).sub(0.5).toVar();
+      const b0 = fract(sv.add(hash(seed.mul(3.1).add(0.5)))).sub(0.5).toVar();
 
       // Punto del cubo del centro y su dirección.
       const q0 = nrm.add(axisA.mul(t0u)).add(axisB.mul(t0v));
@@ -506,22 +646,28 @@ export class Surface {
           };
         }, rough, p.radiusKm);
         const fine = faceOctavesGpu({ face, depth, iu, iv, su: a.add(0.5), sv: b.add(0.5) }, lastOctave, rough, p.radiusKm, MAX_OCTAVE);
-        const noise = land.mul(coarse.add(fine));
+        const noise = land.mul(coarse.add(fine.sum));
         // Altura absoluta (para escalar el desplazamiento) y relativa al centro (precisa).
         const height = h.sub(p.reference).mul(p.relief).add(noise);
         const rel = hRel.mul(p.relief).add(noise.sub(nc));
-        return { pos: off.mul(height.add(1)).add(c.mul(rel)), dir, h, land };
+        // Lo que sube la última octava (radios, a lo largo de `dir`): el material la funde.
+        return { pos: off.mul(height.add(1)).add(c.mul(rel)), dir, h, land, last: land.mul(fine.last) };
       };
 
       const e = float(1 / N);
       const here = pointAt(a0, b0);
-      const pu = pointAt(a0.add(e), b0).pos, pv = pointAt(a0, b0.add(e)).pos;
-      const raw = cross(pu.sub(here.pos), pv.sub(here.pos));
-      // Hacia fuera; si el producto vectorial degenera, la vertical.
-      let n = normalize(raw.add(c.mul(1e-12)));
-      n = n.mul(n.dot(c).greaterThanEqual(0).select(float(1), float(-1)));
+      const atU = pointAt(a0.add(e), b0), atV = pointAt(a0, b0.add(e));
+      /** Normal del terreno hacia fuera (si el producto vectorial degenera, la vertical). */
+      const normalOf = (p0: Vec3Node, pu: Vec3Node, pv: Vec3Node) => {
+        const n = normalize(cross(pu.sub(p0), pv.sub(p0)).add(c.mul(1e-12)));
+        return n.mul(n.dot(c).greaterThanEqual(0).select(float(1), float(-1)));
+      };
+      const n = normalOf(here.pos, atU.pos, atV.pos);
+      // La misma sin la última octava: el material pasa de una a otra con la densidad.
+      const without = (q: { pos: Vec3Node; dir: Vec3Node; last: FloatNode }) => q.pos.sub(q.dir.mul(q.last));
+      const n0 = normalOf(without(here), without(atU), without(atV));
       const index = uint(slotBase).add(j);
-      offsetOut.element(index).assign(vec4(here.pos, hash(fj.add(seed))));
+      offsetOut.element(index).assign(vec4(here.pos, here.last));
 
       // Color: albedo real, más oscuro en las pendientes y con algo de grano.
       const dir = here.dir;
@@ -533,9 +679,11 @@ export class Surface {
       const rock = float(1).sub(smoothstep(0.15, 0.6, slope).mul(here.land).mul(0.35));
       const tint = vec3(look.tint.r, look.tint.g, look.tint.b);
       const water = look.water ? float(1).sub(here.land) : float(0);
-      colorOut.element(index).assign(vec4(albedo.mul(tint).mul(grain).mul(rock), water));
       const night = nightTex ? texture(nightTex, uv).level(float(0)).r : float(0);
-      normalOut.element(index).assign(vec4(n, night));
+      // Agua y luces nocturnas, 8 bits cada una, en un solo float (entero < 2^16, exacto).
+      const packed = water.mul(255).round().add(night.clamp(0, 1).mul(255).round().mul(256));
+      colorOut.element(index).assign(vec4(albedo.mul(tint).mul(grain).mul(rock), packed));
+      normalOut.element(index).assign(vec4(octEncode(n), octEncode(n0)));
     })().compute(JOBS * NN);
   }
 
@@ -547,21 +695,30 @@ export class Surface {
     const slotBase = uniform(0).onObjectUpdate(({ object }) => object!.userData.slotBase as number);
     const spacing = uniform(0.01).onObjectUpdate(({ object }) => object!.userData.spacing as number);
     const appear = uniform(1).onObjectUpdate(({ object }) => object!.userData.appear as number);
+    const up = uniform(new THREE.Vector3(0, 1, 0)).onObjectUpdate(({ object }) => object!.userData.up as THREE.Vector3);
+    const mouseSlot = uniform(-1).onObjectUpdate(({ object }) => (object!.userData.mouseSlot as number | undefined) ?? -1);
 
     const index = uint(slotBase).add(instanceIndex);
     const data = offsetIn.element(index);
     const surf = colorIn.element(index);
     const normalData = normalIn.element(index);
-    const center = data.xyz;
+    const water = surf.w.mod(256).div(255), night = surf.w.div(256).floor().div(255);
 
     // Densidad continua por partícula (§7.3): a su distancia, ¿cuántas hacen falta para
     // ~2,6 px de separación? Las posiciones son aleatorias, así que el índice sirve de umbral:
     // se dibujan las primeras y, con menos, los puntos crecen. Sin saltos entre chunks ni niveles.
-    const depth = modelViewMatrix.mul(vec4(center, 1)).z.negate();
+    const depth = modelViewMatrix.mul(vec4(data.xyz, 1)).z.negate();
     const spacingPx = spacing.mul(look.objectScale).div(depth.mul(pixelAngle));
     const fraction = spacingPx.div(targetPx).pow(2).clamp(0.03, 1);
     const rank = float(instanceIndex).add(0.5).div(NN);
     const keep = step(rank, fraction);
+
+    // La última octava fina entra con la densidad dibujada: depende de la distancia, no del
+    // nivel del chunk, así que a los dos lados del borde entre niveles el relieve es el mismo.
+    const fine = smoothstep(LAST_OCTAVE_FADE[0], LAST_OCTAVE_FADE[1], fraction);
+    // Ratón: el desplazamiento de su hueco, si el chunk tiene uno.
+    const mouse = this.mouse.offsetAt(uint(max(mouseSlot, 0)).mul(uint(NN)).add(instanceIndex)).mul(step(0, mouseSlot));
+    const center = data.xyz.sub(up.mul(data.w.mul(float(1).sub(fine)))).add(mouse);
 
     const material = new THREE.SpriteNodeMaterial({ transparent: false, alphaTest: 0.5 });
     const { scale, visibility } = ballSprite({
@@ -580,7 +737,8 @@ export class Surface {
     // Luz: día/noche con la normal de la esfera, relieve con la del terreno (§7.2).
     const world = modelWorldMatrix.mul(vec4(center, 1)).xyz;
     const radial = normalize(world.sub(look.planetCenter));
-    const terrainN = normalize(transformDirection(normalData.xyz, modelWorldMatrix));
+    const localN = normalize(mix(octDecode(normalData.zw), octDecode(normalData.xy), fine));
+    const terrainN = normalize(transformDirection(localN, modelWorldMatrix));
     const ndl = radial.dot(look.sunDirection);
     const daylight = smoothstep(-0.06, 0.12, ndl);
     const sphereLit = ndl.add(0.08).div(1.08).clamp(0, 1);
@@ -597,12 +755,12 @@ export class Surface {
 
     // Luces de ciudades en el lado nocturno.
     const nightSide = float(1).sub(smoothstep(-0.12, 0.06, ndl));
-    rgb = rgb.add(vec3(1.0, 0.68, 0.38).mul(smoothstep(0.03, 0.5, normalData.w).mul(nightSide).mul(rockyLook.nightLights)).mul(bead));
+    rgb = rgb.add(vec3(1.0, 0.68, 0.38).mul(smoothstep(0.03, 0.5, night).mul(nightSide).mul(rockyLook.nightLights)).mul(bead));
     if (look.water) {
       // Reflejo del Sol en el agua.
       const view = normalize(world.negate());
       const h = normalize(look.sunDirection.add(view));
-      let spec = pow(max(radial.dot(h), 0), 160).mul(surf.w).mul(sphereLit).mul(rockyLook.specular);
+      let spec = pow(max(radial.dot(h), 0), 160).mul(water).mul(sphereLit).mul(rockyLook.specular);
       if (sun) spec = spec.mul(sun.x);
       rgb = rgb.add(vec3(1.0, 0.95, 0.85).mul(spec).mul(bead));
     }
@@ -616,6 +774,9 @@ export class Surface {
     this.material.dispose();
     this.generate.dispose();
     this.pool.dispose(renderer);
-    freeStorageBuffers(renderer, [this.jobs, this.tile].map((a) => storage(a, 'vec4', a.count) as ParticleBuffer));
+    const { buffers, computes } = this.mouse.resources;
+    for (const c of [...computes, this.mouseReset]) c.dispose();
+    freeStorageBuffers(renderer, buffers);
+    freeStorageBuffers(renderer, [this.jobs, this.tile, this.mouseData].map((a) => storage(a, 'vec4', a.count) as ParticleBuffer));
   }
 }

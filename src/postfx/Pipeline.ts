@@ -7,9 +7,30 @@
  * - Warp: estelas radiales hacia los bordes (las estrellas se estiran), aberración cromática
  *   y viñeta, según `warp` (0–1). Va en una rama con un uniform: en reposo cuesta lo mismo
  *   que sin él (dos lecturas por píxel).
+ * - Tramado (*dithering*) al final, ya con el tone mapping y en sRGB: el halo del Sol es un
+ *   degradado muy suave sobre negro y, en 8 bits, cada nivel salía como un anillo de varios
+ *   píxeles. Medio nivel de ruido por píxel los deshace.
  */
 import * as THREE from 'three/webgpu';
-import { Fn, If, Loop, float, length, max, mix, pass, smoothstep, uniform, uv, vec2, vec3, vec4 } from 'three/tsl';
+import {
+  Fn,
+  If,
+  Loop,
+  float,
+  interleavedGradientNoise,
+  length,
+  max,
+  mix,
+  pass,
+  renderOutput,
+  screenCoordinate,
+  smoothstep,
+  uniform,
+  uv,
+  vec2,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 
 export interface BloomControls {
@@ -67,7 +88,12 @@ export function createPipeline(renderer: THREE.WebGPURenderer, scene: THREE.Scen
     return out;
   })();
 
-  const pipeline = new THREE.RenderPipeline(renderer, output);
+  // Tone mapping y espacio de color a mano, para tramar después (con `outputColorTransform` el
+  // pipeline los aplicaría al final, ya sin sitio para el ruido).
+  const mapped = renderOutput(output);
+  const dither = interleavedGradientNoise(screenCoordinate.xy).sub(0.5).div(255);
+  const pipeline = new THREE.RenderPipeline(renderer, vec4(mapped.rgb.add(dither), mapped.a));
+  pipeline.outputColorTransform = false;
   const controls: BloomControls = {
     strength: bloomPass.strength,
     threshold: bloomPass.threshold,
