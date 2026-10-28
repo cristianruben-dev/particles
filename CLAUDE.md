@@ -20,4 +20,5 @@ Sistema solar navegable hecho de partículas (Three.js WebGPU + TSL, TypeScript,
 - Sombras de eclipse (§5.3): la geometría va con posiciones y radios reales en km, nunca en unidades de escena, y la misma fórmula en la CPU (`sunCoverage`) y en la GPU (`bodies/Shadows.ts`).
 - Cometas: coma y colas se colocan respecto al núcleo con `distanceNode` del propio cometa (su `radiusKm` es el de referencia de la coma, §4.3).
 - `satellite.js` se importa desde `astro/sgp4.ts`, no del paquete: su índice arrastra un WebAssembly que rompe el build.
+- Capa cósmica (§14): sus posiciones son km verdaderos respecto al Sol y nunca se mezclan con las de la escena solar. A la GPU van en años luz con `ScaleSystem.cosmic`, restadas de la cámara en float64 en la CPU. La cámara cósmica sale de `OrbitMode.cameraKm`, no de la posición de escena (más allá del relevo se queda en el borde). Relevo y zoom, por la distancia verdadera al Sol (`core/Handoff.ts`), nunca por unidades de escena. Si el panel del navegador mide 0×0, darle tamaño con `resize_window` antes de avanzar frames.
 - Al terminar una fase, marcarla en `docs/PLAN.md`.

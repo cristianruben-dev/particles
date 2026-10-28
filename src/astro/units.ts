@@ -6,6 +6,10 @@
 /** Unidad astronómica en km. */
 export const AU_KM = 149_597_870.7;
 
+/** Año luz (año juliano) y pársec en km. */
+export const LY_KM = 9_460_730_472_580.8;
+export const PC_KM = 30_856_775_814_913.673;
+
 /** Época J2000.0 (2000-01-01 12:00 TT) en milisegundos Unix. */
 export const J2000_MS = Date.UTC(2000, 0, 1, 12, 0, 0);
 

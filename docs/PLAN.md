@@ -1,6 +1,6 @@
 # Plan de desarrollo
 
-Cuatro fases. Cada una termina en algo que se puede abrir en el navegador y disfrutar. Cada fase tiene un **criterio de "hecho"** comprobable: no se pasa a la siguiente hasta cumplirlo.
+Cinco fases. Cada una termina en algo que se puede abrir en el navegador y disfrutar. Cada fase tiene un **criterio de "hecho"** comprobable: no se pasa a la siguiente hasta cumplirlo.
 
 Estado: **Fase 4 en curso**: perfiles de calidad, medidor de fps, interfaz nueva, ficha, aterrizaje, vuelo libre, warp, pantalla de carga, eclipses y tránsitos con su calendario, cometas y la ISS hechos. Publicado en GitHub Pages. Quedan el descenso entre nubes de los gigantes y el sonido (opcional), y comprobar con la ventana delante los 60 fps (el medidor del HUD ya lo permite) y que nada tiemble en escala real.
 
@@ -145,6 +145,42 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 
 ---
 
+## Fase 5 — Más allá del sistema solar (en curso, rama `fase-5-galaxias`)
+
+Objetivo: alejarse sin cortes desde el sistema solar hasta ver la Vía Láctea entera con un «Estás aquí», el Grupo Local y los cúmulos de galaxias. A las otras galaxias se va a mirarlas (órbita a su alrededor), no a entrar en ellas. Diseño en ARQUITECTURA §14.
+
+Antes de empezar: cerrar la medición de los 60 fps de la fase 4, porque la capa cósmica añade carga.
+
+0. [x] **Capa cósmica** (§14.2): verdad en km float64 como el resto, `ScaleSystem.cosmic` (km → años luz, solo para la GPU), cámara cósmica = desplazamiento verdadero de la cámara respecto al Sol (`OrbitMode.cameraKm`), partículas proyectadas sobre una cáscara de 5·10⁹ como `Starfield`, con tamaño y brillo según la distancia real (entre 1,4 y 7 px, conservando la luz) y desvanecido cercano. Regla nueva en `CLAUDE.md`.
+1. [x] **Marco galáctico** en `astro/frames.ts` (§14.3): galáctico ↔ ecuatorial J2000 con la matriz de Hipparcos, y de ahí a la eclíptica y la escena como las estrellas. El Sol en la galaxia, en `astro/galaxy.ts`.
+2. [ ] **Vía Láctea desde dentro** (lo que §8 tenía pendiente para la fase 4): panorama del cielo sin las estrellas puntuales, muestreado por densidad, con las mismas máscaras que las estrellas (horizonte, día y totalidad).
+3. [~] **Relevo sistema solar ↔ cosmos** (§14.4) por la distancia en km reales de la cámara al Sol, entre 1.000 y 10.000 UA: la escena solar se funde y queda el Sol como una estrella más. Zoom más allá de las 200 UA con el Sol enfocado. Hecho, salvo las estrellas: las de Yale (en el infinito) se apagan provisionalmente entre 0,15 y 1,5 años luz; falta pasarlas a 3D con distancias (HYG).
+4. [~] **Vía Láctea desde fuera**: modelo procedural generado en un worker con parámetros publicados (disco, bulbo, barra, brazos ajustados a Reid et al. 2019 con el brazo de Orión, polvo y regiones HII), con «Sol · estás aquí» y «Centro galáctico». Falta: cúmulos globulares reales (Harris), Nubes de Magallanes, nombres de los brazos y el fundido con el panorama.
+5. [ ] **Grupo Local**: Andrómeda, Triángulo y las enanas (McConnachie 2012) con plantillas de partículas por tipo, orientadas con su inclinación y su ángulo de posición. Andrómeda, enfocable.
+6. [ ] **Cúmulos y red cósmica**: 2MRS o Cosmicflows-4, un punto por galaxia e impostores para las que más miden en pantalla, con los «dedos de Dios» corregidos; nombres de Virgo, Coma, el Gran Atractor, el Vacío Local y Laniakea.
+7. [~] **Navegación e interfaz** (§14.5): hechos la tecla `G` (zoom logarítmico hasta la galaxia entera y de vuelta), el «arriba» hacia el norte galáctico, el pivote de la órbita del Sol al centro galáctico sin saltos, la vuelta al sistema solar antes de viajar a un cuerpo, las distancias en años luz y sin vuelo libre fuera del sistema solar. Faltan los escalones como botones (y el warp en ellos), la barra de escala, ocultar la barra de tiempo en los niveles cósmicos, el título («Sol» sigue arriba) y las fichas de las galaxias.
+
+**Hecho cuando:**
+- [ ] Se va de la superficie de la Tierra a fuera de la Vía Láctea y de vuelta sin saltos ni cortes (medido frame a frame, como el cambio de escala de la fase 2), en la escala comprimida y en la real.
+- [ ] Desde el suelo, la banda pasa por donde debe: el centro galáctico entre Escorpio y Sagitario (AR 17h46m, Dec −29°), la Gran Nube de Magallanes en Dorado (AR 5h24m, Dec −69°45′), y el panorama no está en espejo.
+- [ ] Desde fuera, el Sol está a 8,2 kpc del centro, en el brazo de Orión y ~21 pc sobre el plano, y la dirección al centro desde él coincide con la del panorama.
+- [ ] Andrómeda en AR 0h42m44s, Dec +41°16′, a ~2,5 millones de años luz, con su inclinación (77°) y su ángulo de posición (38°); M87 en el centro de Virgo, a ~54 millones.
+- [ ] 60 fps con la galaxia llenando la pantalla, medido con la ventana delante.
+
+**Verificaciones de la fase 5** (panel del navegador emulando 1280×800, calidad alta; los fps de ahí no son fiables):
+- Matriz galáctica (script aparte): ortonormal, el centro en AR 266,405°, Dec −28,936° y el polo norte en AR 192,860°, Dec +27,128°, como la IAU; plano galáctico a 60,2° de la eclíptica.
+- Relevo, frame a frame con `G` desde la Tierra: la dirección al Sol de la capa cósmica y la de la escena solar coinciden de 1 a 10.000 UA (0,0000° en la escala comprimida y 0,0000015° en la real); la presencia del sistema solar baja de 1 a 0 entre 1.000 y 10.000 UA.
+- Vuelta desde 120.000 años luz, sin posiciones no finitas: a la Tierra (zoom hasta 600 UA y viaje), al Halley de 2061 con «Ir» (el mayor encogimiento por frame, un 7 %) y al eclipse de Sol de 2027 «desde el suelo» (aterriza a 10 km).
+- Vuelo libre empujado a 5·10¹³ km: se queda en 1.000 UA y al salir la órbita sigue en el Sol a esa distancia.
+- Visto: la galaxia de cara con la barra, los brazos, el polvo y las regiones HII; de canto, el disco fino con el bulbo; a 15.000 años luz, sobrevolando los brazos; a 3 años luz del Sol, un campo de puntos con la banda de la galaxia; a 2.650 UA, el sistema solar encogiéndose y fundiéndose. 96 fps con la galaxia entera y 57 sobrevolándola, en el panel.
+
+**Pendientes detectados en la fase 5:**
+- Desde dentro (de 1,5 a unos miles de años luz del Sol) el cielo es el propio modelo como puntos, no el cielo real: lo arreglan el panorama (paso 2) y las estrellas con distancia (paso 3).
+- De canto, el polvo se ve como elipses (los brazos casi de perfil) más que como una franja oscura continua.
+- Los brazos son un modelo de cuatro espirales simétricas: fuera del lado del Sol (lo que no se ha medido) son una extrapolación.
+
+---
+
 ## Riesgos conocidos
 
 | Riesgo | Mitigación |
@@ -154,3 +190,6 @@ Objetivo: demostrar el efecto visual central con tres cuerpos.
 | Parpadeo de chunks en el quadtree | Histéresis + fundido cruzado entre niveles. |
 | Partículas que se ven "huecas" muy de cerca | La densidad del chunk crece con el zoom; tamaño de partícula mínimo en píxeles para que se solapen. |
 | Cambios de API en Three.js (TSL evoluciona rápido) | Versión fijada en `package.json`; actualizar a propósito leyendo el changelog. |
+| La Vía Láctea desde dentro se ve granulada con partículas (fase 5) | Sprites suaves que se solapan (es un brillo, no un sólido); si no basta, el brillo difuso como textura en el fondo y las partículas encima. |
+| Sobredibujo aditivo con una galaxia a pantalla completa (fase 5) | Sprites pequeños, LOD por densidad y un tope de impostores de galaxias. |
+| Licencias de catálogos y panoramas (fase 5) | Comprobarlas antes de usarlos y registrarlas en `docs/ASSETS.md`. |

@@ -8,7 +8,11 @@
  *   desliza bajo los pies) y la mirada se inclina hacia el horizonte.
  */
 import * as THREE from 'three/webgpu';
+import { eclToScene, type Vec3d } from '../astro/frames';
+import { GALACTIC_CENTER_DIR, GALACTIC_CENTER_KM, GALACTIC_NORTH } from '../astro/galaxy';
+import { LY_KM } from '../astro/units';
 import type { CelestialBody } from '../bodies/CelestialBody';
+import { HANDOFF_END_KM, HANDOFF_START_KM, logStep } from '../core/Handoff';
 import type { CameraRig } from './CameraRig';
 import type { NavigationMode } from './NavigationMode';
 
@@ -36,7 +40,31 @@ const LAND_ALTITUDE_RADII = 1.5e-3;
 const LAND_PITCH = 0.85;
 const landSeconds = (ratio: number) => Math.min(9, Math.max(4.5, 2.5 + 0.55 * Math.log(Math.max(ratio, 1))));
 
-type Frame = 'scene' | 'body';
+/**
+ * Más allá del sistema solar (§14.5), solo con el Sol enfocado: con otro cuerpo, en la
+ * escala comprimida su dirección al Sol no es la real y el Sol-estrella no caería en su sitio.
+ * Hasta ~320.000 años luz: la galaxia entera cabe en pantalla.
+ */
+const COSMIC_MAX_KM = 3e18;
+/** Entre estas distancias el centro de la órbita pasa del Sol al centro galáctico. */
+const PIVOT_START_KM = 2_000 * LY_KM;
+const PIVOT_END_KM = 40_000 * LY_KM;
+/** Y el «arriba» gira hacia el norte galáctico (el plano va ~60° inclinado sobre la eclíptica). */
+const UP_START_KM = 300 * LY_KM;
+const UP_END_KM = 5_000 * LY_KM;
+/** Por encima, arrastrar gira alrededor del polo galáctico (histéresis al bajar). */
+const GALAXY_FRAME_ENTER_KM = 3_000 * LY_KM;
+const GALAXY_FRAME_EXIT_KM = 2_000 * LY_KM;
+
+type Frame = 'scene' | 'body' | 'galaxy';
+
+/** Marco galáctico → escena: x hacia el centro galáctico, y hacia el polo norte galáctico. */
+const GALAXY_Q = (() => {
+  const x = new THREE.Vector3(GALACTIC_CENTER_DIR.x, GALACTIC_CENTER_DIR.y, GALACTIC_CENTER_DIR.z);
+  const y = new THREE.Vector3(GALACTIC_NORTH.x, GALACTIC_NORTH.y, GALACTIC_NORTH.z);
+  const z = new THREE.Vector3().crossVectors(x, y);
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+})();
 
 export class OrbitMode implements NavigationMode {
   readonly name = 'orbit';
@@ -95,6 +123,10 @@ export class OrbitMode implements NavigationMode {
   /** Uno nuevo en cada `enter`: `exit` lo aborta y quita los listeners. */
   private abort = new AbortController();
   private readonly q = new THREE.Quaternion();
+  private readonly q2 = new THREE.Quaternion();
+  /** Cámara respecto al Sol (km verdaderos, ejes de escena); no vale durante un viaje. */
+  private readonly trueCamera: Vec3d = { x: 0, y: 0, z: 0 };
+  private trueCameraValid = false;
 
   constructor(
     initialFocus: CelestialBody,
@@ -130,9 +162,40 @@ export class OrbitMode implements NavigationMode {
     return tr.warp * speed * speed;
   }
 
-  /** true mientras baja o sube con los botones. */
+  /** true mientras baja o sube con los botones (o con el zoom cósmico). */
   get descending(): boolean {
     return this.descent !== null;
+  }
+
+  /**
+   * Cámara respecto al Sol en km verdaderos (ejes de escena), para la capa cósmica (§14.2).
+   * Sale de la altitud en km, no de la posición de escena: más allá del relevo esta se queda
+   * en el borde. Devuelve false durante un viaje (entonces vale la de escena).
+   */
+  cameraKm(out: Vec3d): boolean {
+    Object.assign(out, this.trueCamera);
+    return this.trueCameraValid;
+  }
+
+  /**
+   * Lleva la altitud (escala logarítmica) hasta `altitudeKm` y, si se da, la dirección desde
+   * el centro hasta `toDir` (unitaria, ejes de escena): el zoom hasta la galaxia y de vuelta.
+   */
+  zoomTo(altitudeKm: number, toDir?: Dir): void {
+    if (this.transition) return;
+    const toAltitude = Math.min(this.maxAltitude, Math.max(this.minAltitude, altitudeKm));
+    const local = toDir ? this.fromScene(toDir) : null;
+    const ratio = toAltitude / this.altitude;
+    this.descent = {
+      t: 0,
+      duration: landSeconds(Math.max(ratio, 1 / ratio)),
+      fromAltitude: this.altitude,
+      toAltitude,
+      fromDir: local ? fromAngles(this.azimuth, this.elevation) : null,
+      toDir: local,
+      fromPitch: this.pitch,
+      toPitch: this.pitch,
+    };
   }
 
   /**
@@ -201,6 +264,10 @@ export class OrbitMode implements NavigationMode {
 
   private get minAltitude(): number {
     return this.focus.landable ? MIN_GROUND_KM : this.focus.data.radiusKm * MIN_ALTITUDE_RADII;
+  }
+
+  private get maxAltitude(): number {
+    return this.focus.parent === null ? COSMIC_MAX_KM : MAX_DISTANCE_KM;
   }
 
   /** Coloca la cámara mirando el lado de día del cuerpo enfocado (al arrancar). */
@@ -294,8 +361,10 @@ export class OrbitMode implements NavigationMode {
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
       this.descent = null;
-      const next = this.targetAltitude * Math.exp(e.deltaY * 0.0015);
-      this.targetAltitude = Math.min(MAX_DISTANCE_KM, Math.max(this.minAltitude, next));
+      // Fuera del sistema solar, el triple de rápido: hay 8 órdenes de magnitud hasta la galaxia.
+      const rate = 1 + 2 * logStep(this.targetAltitude, HANDOFF_START_KM, 1e17);
+      const next = this.targetAltitude * Math.exp(e.deltaY * 0.0015 * rate);
+      this.targetAltitude = Math.min(this.maxAltitude, Math.max(this.minAltitude, next));
     }, { ...opts, passive: false });
   }
 
@@ -322,6 +391,11 @@ export class OrbitMode implements NavigationMode {
     if (!this.transition && body.landable && !(ds?.toDir)) {
       if (this.frame === 'scene' && this.altitude < r * BODY_FRAME_ENTER) this.setFrame('body');
       else if (this.frame === 'body' && this.altitude > r * BODY_FRAME_EXIT) this.setFrame('scene');
+    }
+    // Lejos del Sol, el marco galáctico (no a mitad de una animación: sus direcciones van en el marco de partida).
+    if (!this.transition && !ds && !body.parent) {
+      if (this.frame === 'scene' && r + this.altitude > GALAXY_FRAME_ENTER_KM) this.setFrame('galaxy');
+      else if (this.frame === 'galaxy' && r + this.altitude < GALAXY_FRAME_EXIT_KM) this.setFrame('scene');
     }
 
     // Suavizado exponencial independiente del framerate; la altitud en escala logarítmica.
@@ -350,7 +424,17 @@ export class OrbitMode implements NavigationMode {
     // El suelo bajo la cámara (con su relieve) define la distancia al centro.
     const groundKm = body.groundHeightKm(dir);
     const distanceKm = r + groundKm + this.altitude;
-    let sceneDistance = rig.scale.localDistance(body.data, distanceKm);
+    // Más allá del relevo la escena solar ya no se dibuja: su cámara se queda en el borde (§14.4).
+    let sceneDistance = rig.scale.localDistance(body.data, Math.min(distanceKm, HANDOFF_END_KM));
+
+    // Cámara verdadera para la capa cósmica. Con el Sol enfocado y muy lejos, el centro de la
+    // órbita pasa al centro galáctico: la mirada sigue siendo −dir, solo se desplaza la cámara.
+    this.trueCameraValid = !tr;
+    const pivot = body.parent ? 0 : logStep(distanceKm, PIVOT_START_KM, PIVOT_END_KM);
+    const bodyKm = eclToScene(body.positionKm);
+    this.trueCamera.x = bodyKm.x + GALACTIC_CENTER_KM.x * pivot + dir.x * distanceKm;
+    this.trueCamera.y = bodyKm.y + GALACTIC_CENTER_KM.y * pivot + dir.y * distanceKm;
+    this.trueCamera.z = bodyKm.z + GALACTIC_CENTER_KM.z * pivot + dir.z * distanceKm;
     const groundScene = rig.scale.localDistance(body.data, r + groundKm);
     const f = body.sceneD;
     let target = f;
@@ -396,30 +480,41 @@ export class OrbitMode implements NavigationMode {
     const reach = Math.max(rig.clearance, 1e-9) * 10;
     Object.assign(rig.target, { x: p.x + view.x * reach, y: p.y + view.y * reach, z: p.z + view.z * reach });
     Object.assign(rig.up, { x: dir.x * st + fwd.x * ct, y: dir.y * st + fwd.y * ct, z: dir.z * st + fwd.z * ct });
+    // Lejos del Sol, el «arriba» gira hacia el norte galáctico. Se calcula aparte del marco del
+    // arrastre: al pasar al marco galáctico la imagen no da un giro de golpe.
+    const w = body.parent ? 0 : logStep(distanceKm, UP_START_KM, UP_END_KM);
+    if (w > 0) Object.assign(rig.up, rotateTowards(tangentTo(dir, { x: 0, y: 1, z: 0 }), tangentTo(dir, GALACTIC_NORTH), dir, w));
+  }
+
+  /** Orientación del marco → escena. */
+  private frameQuaternion(frame: Frame, out: THREE.Quaternion): THREE.Quaternion {
+    if (frame === 'body') return out.copy(this.focus.spinQuaternion);
+    if (frame === 'galaxy') return out.copy(GALAXY_Q);
+    return out.identity();
   }
 
   /** Dirección del marco actual → escena. */
   private toScene(d: Dir): Dir {
     if (this.frame === 'scene') return d;
-    const v = new THREE.Vector3(d.x, d.y, d.z).applyQuaternion(this.focus.spinQuaternion);
+    const v = vec(d).applyQuaternion(this.frameQuaternion(this.frame, this.q2));
+    return { x: v.x, y: v.y, z: v.z };
+  }
+
+  /** Dirección de escena → marco actual. */
+  private fromScene(d: Dir): Dir {
+    if (this.frame === 'scene') return d;
+    const v = vec(d).applyQuaternion(this.frameQuaternion(this.frame, this.q2).invert());
     return { x: v.x, y: v.y, z: v.z };
   }
 
   /** Cambia de marco conservando la posición y el objetivo del arrastre. */
   private setFrame(frame: Frame): void {
     if (frame === this.frame) return;
-    const q = this.q.copy(this.focus.spinQuaternion);
-    if (frame === 'scene') {
-      // cuerpo → escena
-      const conv = (az: number, el: number) => toAngles(new THREE.Vector3().copy(vec(fromAngles(az, el))).applyQuaternion(q));
-      [this.azimuth, this.elevation] = conv(this.azimuth, this.elevation);
-      [this.targetAzimuth, this.targetElevation] = conv(this.targetAzimuth, this.targetElevation);
-    } else {
-      q.invert();
-      const conv = (az: number, el: number) => toAngles(new THREE.Vector3().copy(vec(fromAngles(az, el))).applyQuaternion(q));
-      [this.azimuth, this.elevation] = conv(this.azimuth, this.elevation);
-      [this.targetAzimuth, this.targetElevation] = conv(this.targetAzimuth, this.targetElevation);
-    }
+    // marco actual → escena → marco nuevo
+    const q = this.frameQuaternion(frame, this.q).invert().multiply(this.frameQuaternion(this.frame, this.q2));
+    const conv = (az: number, el: number) => toAngles(vec(fromAngles(az, el)).applyQuaternion(q));
+    [this.azimuth, this.elevation] = conv(this.azimuth, this.elevation);
+    [this.targetAzimuth, this.targetElevation] = conv(this.targetAzimuth, this.targetElevation);
     this.frame = frame;
   }
 
@@ -451,6 +546,19 @@ const normalize = (a: Dir): Dir => {
   const l = Math.hypot(a.x, a.y, a.z) || 1;
   return { x: a.x / l, y: a.y / l, z: a.z / l };
 };
+
+/** Componente de `v` perpendicular a `dir` (unitaria): hacia dónde queda `v` en pantalla. */
+function tangentTo(dir: Dir, v: Dir): Dir {
+  const k = dot(v, dir);
+  return normalize({ x: v.x - dir.x * k, y: v.y - dir.y * k, z: v.z - dir.z * k });
+}
+
+/** Gira `a` alrededor de `axis` (perpendicular a los dos) una fracción `t` del ángulo hasta `b`. */
+function rotateTowards(a: Dir, b: Dir, axis: Dir, t: number): Dir {
+  const angle = Math.atan2(dot(axis, cross(a, b)), dot(a, b)) * t;
+  const c = Math.cos(angle), s = Math.sin(angle), ax = cross(axis, a);
+  return { x: a.x * c + ax.x * s, y: a.y * c + ax.y * s, z: a.z * c + ax.z * s };
+}
 
 /** Interpolación esférica entre direcciones unitarias. */
 function slerp(a: Dir, b: Dir, t: number): Dir {

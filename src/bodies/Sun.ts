@@ -21,6 +21,7 @@ import {
 } from 'three/tsl';
 import type * as THREE from 'three/webgpu';
 import type { BodyData } from '../astro/bodies';
+import { handoff } from '../core/Handoff';
 import { bakeSphere } from '../particles/bake';
 import { Disturbance } from '../particles/Disturbance';
 import {
@@ -124,7 +125,7 @@ export class Sun extends BaseBody {
     const mu = max(worldNormal(dir).dot(viewDirection(center)), 0);
     const limb = float(0.3).add(pow(mu, 0.6).mul(0.7));
     const bead = mix(float(1), float(0.3).add(pow(b.facing, 1.5).mul(0.75)), visibility);
-    material.colorNode = vec4(color.mul(limb).mul(bead).mul(sunLook.brightness), 1);
+    material.colorNode = vec4(color.mul(limb).mul(bead).mul(sunLook.brightness).mul(handoff.solar), 1);
 
     return field;
   }
@@ -151,7 +152,7 @@ export class Sun extends BaseBody {
       objectScale: this.objectScale,
     });
     const intensity = float(1).sub(f).pow(2.5).mul(sunLook.corona).mul(tier.appear);
-    material.colorNode = vec4(vec3(1.0, 0.6, 0.28).mul(intensity), 1);
+    material.colorNode = vec4(vec3(1.0, 0.6, 0.28).mul(intensity).mul(handoff.solar), 1);
     material.opacityNode = softDisc();
 
     return field;

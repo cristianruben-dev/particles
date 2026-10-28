@@ -8,6 +8,7 @@
  */
 import * as THREE from 'three/webgpu';
 import { float, fract, instanceIndex, length, modelWorldMatrix, smoothstep, step, uniform, vec3, vec4 } from 'three/tsl';
+import { handoff } from '../core/Handoff';
 import { horizonMask } from '../core/Horizon';
 import { COMET_ELEMENTS, anomalyAtDistance, cometElementsAt, cometOrbitPoint, cometPeriodDays, jdToMs } from '../astro/comets';
 import { positionRelativeToParent } from '../astro/ephemeris';
@@ -82,7 +83,7 @@ class Orbit {
     const near = smoothstep(this.bodyRadius.mul(1.3), this.bodyRadius.mul(3), length(local.sub(this.bodyLocal)));
     const c = new THREE.Color(body.data.color).lerp(new THREE.Color(0xffffff), 0.35);
     const world = modelWorldMatrix.mul(vec4(local, 1)).xyz;
-    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(trail).mul(near).mul(this.fade).mul(orbitLook.brightness).mul(horizonMask(world)).mul(0.5), 1);
+    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(trail).mul(near).mul(this.fade).mul(orbitLook.brightness).mul(horizonMask(world)).mul(handoff.solar).mul(0.5), 1);
     material.opacityNode = softDisc();
   }
 
@@ -165,7 +166,7 @@ class CometOrbit {
     const near = smoothstep(this.bodyRadius.mul(1.3), this.bodyRadius.mul(3), length(local.sub(this.bodyLocal)));
     const c = new THREE.Color(body.data.color).lerp(new THREE.Color(0xffffff), 0.3);
     const world = modelWorldMatrix.mul(vec4(local, 1)).xyz;
-    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(trail).mul(near).mul(this.fade).mul(orbitLook.brightness).mul(horizonMask(world)).mul(0.42), 1);
+    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(trail).mul(near).mul(this.fade).mul(orbitLook.brightness).mul(horizonMask(world)).mul(handoff.solar).mul(0.42), 1);
     material.opacityNode = softDisc();
     this.qKm = el.q * AU_KM;
   }

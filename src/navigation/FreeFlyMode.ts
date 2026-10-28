@@ -14,6 +14,7 @@
  */
 import * as THREE from 'three/webgpu';
 import type { CelestialBody } from '../bodies/CelestialBody';
+import { HANDOFF_START_KM } from '../core/Handoff';
 import type { CameraRig } from './CameraRig';
 import type { NavigationMode } from './NavigationMode';
 
@@ -182,7 +183,8 @@ export class FreeFlyMode implements NavigationMode {
     const rel = this.w.copy(sceneDir).multiplyScalar(sceneDistance).addScaledVector(this.velocity, dt);
     const newDistance = rel.length();
     const newDirScene = rel.divideScalar(newDistance);
-    let km = rig.scale.inverseLocalDistance(body.data, newDistance);
+    // Sin salir del sistema solar: el relevo al cosmos es solo con el zoom de la órbita (§14.5).
+    let km = Math.min(rig.scale.inverseLocalDistance(body.data, newDistance), HANDOFF_START_KM);
     // Colisión con el relieve: nunca por debajo de la altitud mínima.
     const floor = r + body.groundHeightKm(newDirScene) + this.minAltitude;
     if (km < floor) {

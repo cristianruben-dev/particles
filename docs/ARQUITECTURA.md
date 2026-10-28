@@ -35,6 +35,7 @@ src/
 ├── bodies/              Cada tipo de cuerpo celeste (Sol, rocoso, gaseoso, anillos…), niveles de detalle, órbitas
 ├── surface/             Quadtree de cubo-esfera y chunks para el aterrizaje
 ├── navigation/          Cámara y modos: vuelo libre, órbita, viaje
+├── cosmos/              Capa cósmica: Vía Láctea y, después, galaxias y cúmulos (§14)
 ├── postfx/              Bloom, tone mapping, efecto warp
 └── ui/                  HUD, panel de información, panel de debug
 scripts/
@@ -290,7 +291,7 @@ Todos implementan `CelestialBody` (`bodies/CelestialBody.ts`): `update(ctx)`, `s
 | `OrbitLines` ✅ | Órbitas de partículas: puntos muestreados en el tiempo (una vuelta hacia atrás) con las mismas efemérides que mueven cada cuerpo, más brillantes justo detrás de él (estela). Se apagan cerca del cuerpo y cuando la órbita es diminuta en pantalla. |
 | `Comet` ✅ | Coma (densidad más concentrada que 1/r², algo hacia el Sol, verdosa hacia fuera), **cola de polvo con síndinas** (la CPU propaga con dos cuerpos una rejilla de 24 edades × 6 β, granos soltados hace τ días que notan la gravedad del Sol rebajada en (1 − β) por la presión de la luz; el shader interpola: la cola se curva y se queda atrás en el plano de la órbita) y **cola de iones** recta, en contra del Sol con la aberración del viento solar (400 km/s), azul, con filamentos que ondulan. Todo aditivo, de tamaño fijo en píxeles, y el flujo con una fase reducida en la CPU. Coma y colas se colocan respecto al núcleo en km y pasan a escena con `distanceNode` **del propio cometa** (§4.3). |
 | `Station` ✅ | La ISS de partículas (~60.000, en orden aleatorio para el LOD): armadura en celosía de 109 m, ocho alas solares de 35 × 11,6 m que giran con las juntas alfa y beta hacia el Sol (en el shader, con tres uniforms), radiadores, módulos (Zvezda, Zariá, Unity, Destiny, Harmony, Columbus, Kibo, Tranquility, la Cúpula, Nauka) y las alas rusas. Actitud de vuelo +XVV (proa hacia la velocidad, +z a la Tierra). Celdas azules con destellos y kapton dorado por detrás; se apaga en la sombra de la Tierra, enrojece al cruzar el terminador y desde abajo la ilumina la Tierra. Se oculta con el reloj por encima de 1 h/s si no está enfocada (da vueltas a saltos). |
-| `Starfield` ✅ | Yale BSC (9.096 estrellas, `scripts/build-stars.mjs`) a radio 10⁹ alrededor de la cámara, tamaño constante en píxeles. Magnitud → tamaño y brillo, índice B-V → color. Fase 4: Vía Láctea con partículas muestreadas de un panorama. |
+| `Starfield` ✅ | Yale BSC (9.096 estrellas, `scripts/build-stars.mjs`) a radio 10⁹ alrededor de la cámara, tamaño constante en píxeles. Magnitud → tamaño y brillo, índice B-V → color. Fase 5: pasa a la capa cósmica, con la Vía Láctea del panorama (§14). |
 
 ## 9. Navegación (`navigation/`)
 
@@ -354,3 +355,85 @@ Sin framework: cada componente es una clase con su `el` y un `update(estado)`; `
 - La profundidad por píxel de las micro-esferas desactiva el *early-z*. Como `alphaTest` ya lo desactivaba, el coste extra es moderado, pero hay que tenerlo en cuenta al medir.
 - Medición de la fase 1: no hay una cifra fiable. Las pruebas se hicieron con la app sin ventana visible y macOS baja la frecuencia de la GPU; los *timestamps* variaron de 0,2 a 60 ms para la misma vista. Hay que medir con la ventana delante (fps del HUD).
 - Texturas grandes (heightmaps de 16k) se cargan bajo demanda y con un nivel de baja resolución primero.
+
+## 14. Más allá del sistema solar (fase 5, en curso)
+
+Fase 5: alejarse desde el sistema solar hasta la Vía Láctea entera, el Grupo Local y los cúmulos de galaxias. Hechos: la capa cósmica, el marco galáctico, el relevo, la Vía Láctea vista desde fuera (primera versión) y el zoom con la tecla `G`. Lo demás es diseño.
+
+### 14.1 Por qué una capa aparte
+
+Estirar `ScaleSystem` y `OrbitMode` hasta distancias galácticas no funciona:
+
+- En la escala real (1 unidad = 1.000 km) la esfera de estrellas está a 10⁹ (≈ 6.700 UA) y el plano lejano a 10¹⁰ (≈ 1 año luz): más allá, el Sol queda detrás del cielo y luego se recorta.
+- `inverseLocalDistance` busca hasta 10¹³ km (~1 año luz): el vuelo libre se rompería.
+- El zoom llega a 3·10¹⁰ km (`MAX_DISTANCE_KM`, 200 UA) y la rueda multiplica por ~1,16 en cada golpe: unos 115 golpes hasta ver la galaxia entera y otros 40 hasta Virgo.
+- Tampoco hace falta la escala comprimida: Andrómeda está a ~25 diámetros de la Vía Láctea, mientras que la Tierra está a ~11.700 diámetros del Sol. En el cosmos la escala real ya se ve bien, y es la única.
+
+### 14.2 La capa cósmica
+
+- **Verdad en km float64, como el resto** (los catálogos se convierten al cargar). A 10²² km (Laniakea) el float64 resuelve ~10⁶ km: de sobra. Las posiciones cósmicas nunca se mezclan con las de la escena solar.
+- **Cámara cósmica** = posición del Sol en la galaxia + desplazamiento verdadero de la cámara respecto al Sol (en km, el que guarda el modo de navegación según §9). Dentro del sistema solar ese desplazamiento es despreciable (200 UA = 0,003 años luz): el cielo cósmico es el que se ve desde el Sol.
+- **`ScaleSystem.cosmic`**: km → años luz, solo para lo que sube a la GPU. Así se mantiene la regla de §4.2 (solo `ScaleSystem` convierte km).
+- **Se dibuja como `Starfield`** (`cosmos/CosmicLayer.ts`): cada partícula se proyecta sobre una cáscara de radio 5·10⁹ alrededor de la cámara (por fuera de la escena solar entera durante el relevo, dentro del plano lejano), en su dirección real. Tamaño angular = diámetro / distancia real, entre 1,4 y 7 px. Por debajo del mínimo el brillo baja con el área (brillo superficial constante, como en el cielo de verdad); por encima del máximo sube con el área, hasta ×4: de cerca, una nube de millones de estrellas no se ve como una mancha de cientos de píxeles sino como un punto más brillante, y la galaxia se resuelve en "estrellas" al acercarse. Al ser aditivo no hay que ordenar ni hace falta otra pasada: bloom, warp, `horizonMask` y el apagado de día y en la totalidad funcionan igual. La escena solar queda siempre delante, porque el relevo (§14.4) la mantiene dentro de la cáscara.
+- **Precisión**: la resta centro de la galaxia − cámara se hace en float64 en la CPU por objeto y sube como uniform; las partículas guardan su posición relativa al centro de su galaxia (años luz, ejes de escena), como las de los planetas. Con la cámara en el Sol, a 8,2 kpc del centro, el error de float32 en las partículas cercanas es de ~100 UA: invisible.
+- **Desvanecido cercano**: cada partícula del modelo representa millones de estrellas. Se apaga entre 8 y 2 diámetros suyos de la cámara; allí mandarán el panorama (desde dentro) y las estrellas con distancia.
+- **Polvo** (las franjas oscuras): no se puede sumar. Va en una capa con mezcla `dst · (1 − src)` (`CustomBlending`), que tampoco necesita orden, y absorbe más el azul. Oscurece también lo que hay delante; de lejos no se nota.
+- **Orden de dibujo** (`renderOrder`): galaxia −4, polvo −3, Sol-estrella −2, estrellas de Yale −1. Todo va antes que lo translúcido de la escena solar (nubes, atmósferas), que así lo atenúa.
+- **LOD** por densidad, como en §6.3: el modelo sale de un worker (`cosmos/galaxy.worker.ts`) en orden aleatorio, que vale para cualquier prefijo. Se dibujan 1,5 partículas por píxel² del disco en pantalla (mínimo 30.000) y cada una lleva la luz de las que faltan.
+- La galaxia se genera la primera vez que la cámara pasa de 100 UA del Sol o se pulsa `G` (~0,5 s en el worker, 760.000 partículas, ~24 MB) y se queda en memoria.
+- Módulo: `src/cosmos/`, al nivel de `bodies/` en la regla de dependencias (§2).
+
+### 14.3 Marco galáctico
+
+- Galáctico ↔ ecuatorial J2000 en `astro/frames.ts` (polo norte galáctico en AR 192,859°, Dec +27,128°; longitud galáctica del polo norte celeste 122,932°) y de ahí `equatorialToEcliptic` → `eclToScene`, como las estrellas.
+- El Sol está a 8,18 kpc del centro (GRAVITY 2019) y ~21 pc sobre el plano (`astro/galaxy.ts`). Así el centro queda a b = −0,15° (Sagitario A* está a −0,05°: no se nota).
+- Verificado con un script: la matriz es ortonormal (error 6·10⁻¹⁷); (l, b) = (0°, 0°) da AR 266,405°, Dec −28,936°; el polo norte galáctico, AR 192,860°, Dec +27,128°; el plano galáctico va 60,2° inclinado sobre la eclíptica.
+- El plano galáctico está inclinado ~60° respecto a la eclíptica: al alejarse, el «arriba» de la cámara gira hacia el norte galáctico para que la galaxia se vea plana, y vuelve a la eclíptica al entrar.
+- **Comprobación** (como la lon 0° de los mapas): desde el Sol, el centro galáctico (AR 266,40°, Dec −28,94°) cae entre Escorpio y Sagitario, entre las estrellas de Yale. Un panorama del cielo se ve **desde dentro**, así que el este va al revés que en el mapa de un planeta: comprobarlo con la Gran Nube de Magallanes y el Saco de Carbón junto a la Cruz del Sur.
+
+### 14.4 Los escalones
+
+| Escalón | Cámara a | Qué se ve | Datos (candidatos) |
+|---|---|---|---|
+| Vía Láctea desde dentro | Dentro del sistema solar | La banda en el cielo, con sus nubes oscuras | Panorama: NASA Deep Star Maps (coordenadas ecuatoriales) o el mapa de Gaia (galácticas) |
+| Salir del sistema solar | 1.000 UA – 1.000 años luz | El Sol se vuelve una estrella más; con estrellas en 3D, las constelaciones se deforman | HYG (~120.000 estrellas con distancia, opcional) |
+| Vía Láctea desde fuera | ~100.000 años luz | Barra, brazos, polvo y «Estás aquí» | Modelo con parámetros publicados; cúmulos globulares de Harris; Nubes de Magallanes |
+| Grupo Local | ~5 millones de años luz | Andrómeda, Triángulo y las enanas | McConnachie 2012 (~100 galaxias) |
+| Cúmulos y red cósmica | 50–500 millones de años luz | Filamentos y nudos de galaxias | 2MRS (~44.000 galaxias) o Cosmicflows-4 (~56.000 con distancia) |
+
+1. **Vía Láctea desde dentro** (lo que §8 tenía pendiente): las estrellas puntuales del panorama se quitan con un filtro de mediana en el script (ya están en Yale) y el resto se muestrea por densidad, como las nubes. Los sprites son suaves y sí se solapan: es un brillo, no un sólido. Si aun así se ve granulado, el brillo difuso va como textura en el fondo (`horizonBackground`, hoy negro en el espacio) y las partículas encima.
+2. **Relevo sistema solar ↔ cosmos** ✅ (`core/Handoff.ts`) por la distancia en **km reales** de la cámara al Sol, entre 1.000 y 10.000 UA en escala logarítmica. Vale igual en la escala comprimida y en la real. A 1.000 UA, en la comprimida, la órbita de Neptuno aún ocupa ~10° de pantalla; a 10.000 UA, ~3°. En la real, 10.000 UA son 1,5·10⁹ unidades: la escena solar sigue dentro de la cáscara.
+   - `handoff.solar` (1 → 0) multiplica lo que se ve de lejos (puntos de los cuerpos, órbitas, cinturones y cometas) y el propio Sol con su corona. A 0 se ocultan los cuerpos y los cinturones, no hay nombres ni clic sobre ellos y el vuelo libre no arranca; el que ya vuela se queda en 1.000 UA.
+   - El Sol-estrella se dibuja sin prueba de profundidad: en el relevo, el Sol de la escena solar (opaco y cada vez más oscuro) está delante en la misma dirección y lo taparía. Solo se ve fuera del sistema solar, donde nada sólido puede quedar en medio.
+   - Más allá, la cámara de la escena solar se queda en el borde (`localDistance` de 10.000 UA) y la de la capa cósmica sigue en km.
+   - El Sol queda como una estrella de la capa cósmica (magnitud absoluta 4,83, con un brillo mínimo para seguir marcando dónde está). Entra a la vez que sale la escena solar.
+   - Medido frame a frame con `G` desde la Tierra: la dirección al Sol de la capa cósmica y la de la escena solar coinciden en todo el relevo (0,0000° en la escala comprimida y 0,0000015° en la real).
+   - Las estrellas de Yale están en el infinito y lejos del Sol enseñarían las mismas constelaciones. Provisionalmente se apagan entre 0,15 y 1,5 años luz mientras entra el modelo de la galaxia. Con distancias (HYG) pasarán a 3D con magnitud aparente = absoluta + 5·log₁₀(d / 10 pc) en el shader.
+   - Opcional: la nube de Oort (2.000–100.000 UA), muy tenue.
+3. **Vía Láctea desde fuera** (primera versión ✅, `cosmos/milkyWayModel.ts`): modelo procedural con parámetros publicados.
+   - Disco exponencial fino (escala de 2,6 kpc) y grueso, vacío dentro de la barra. Bulbo en caja y barra de 4,6 kpc de semilongitud a 27° de la línea Sol–centro, con el extremo cercano hacia l > 0. Halo tenue.
+   - Cuatro brazos espirales logarítmicos de arrastre, en dos pares simétricos (paso de 11,5° y de 10°). Están ajustados para que, en la dirección del Sol, crucen donde los sitúan las paralajes de máseres (Reid et al. 2019): Norma 4,0, Escudo 5,4, Sagitario 6,9, Perseo 10,2 y Exterior 12,0 kpc (medidos: 4,4, 5,4, 6,9, 10 y 12,4). Más el brazo de Orión (8,5 kpc, un tramo de −25° a 40°), con el Sol en su borde interior.
+   - Estrellas jóvenes azules en los brazos (la mitad en asociaciones OB), regiones HII rosadas, y estrellas viejas y amarillas en el bulbo; el disco es más denso sobre los brazos. Polvo en grumos y franjas en el borde interior (cóncavo) de los brazos, más una capa fina en el plano.
+   - La luz de cada partícula va repartida por su área: las pequeñas (HII) brillan más por píxel con la misma luz.
+   - «Sol · estás aquí» y «Centro galáctico» con `MarkerLabels` (`ui/Labels.ts`).
+   - Pendiente: cúmulos globulares reales (Harris, ~150), las Nubes de Magallanes, los nombres de los brazos y el fundido con el panorama. Desde dentro, de momento se ve el propio modelo como puntos.
+4. **Grupo Local**: catálogo de McConnachie (2012), con posición, distancia, tamaño y tipo. Cada galaxia usa una **plantilla de partículas por tipo** compartida (espiral, barrada, elíptica, irregular, enana esferoidal), orientada con su inclinación y su ángulo de posición. Andrómeda y M33 llevan modelo propio y son enfocables (órbita, sin entrar).
+5. **Cúmulos y red cósmica**: cada galaxia es un punto con el color de su tipo, y las K que más miden en pantalla llevan un impostor con su plantilla (ranuras fijas: K × partículas por plantilla acota el coste). Con distancias sacadas del corrimiento al rojo, los cúmulos se estiran hacia nosotros (**dedos de Dios**): a los miembros de un cúmulo conocido se les reduce la dispersión radial a la que tienen en el cielo, o se usan las distancias de Cosmicflows, con su error. Nombres: Virgo, Coma, el Gran Atractor, el Vacío Local y Laniakea.
+
+### 14.5 Navegación e interfaz
+
+- **Tecla `G`** ✅ (`Engine.toggleGalaxy`): con el Sol enfocado, el zoom llega a 3·10¹⁸ km (~320.000 años luz); con otro cuerpo sigue en 200 UA, porque en la escala comprimida su dirección al Sol no es la real. `G` viaja al Sol si hace falta y anima la altitud en escala logarítmica (`OrbitMode.zoomTo`, el mismo mecanismo que el aterrizaje) hasta ~127.000 años luz, por encima del disco y del lado del Sol: así el Sol queda debajo del centro, como en los mapas. Fuera del sistema solar la rueda va tres veces más rápida.
+- **`OrbitMode.cameraKm`** ✅: la cámara verdadera (km respecto al Sol) sale de la altitud en km, no de la posición de escena, que más allá del relevo se queda en el borde. En los viajes y en vuelo libre sale de la posición de escena con `inverseLocalDistance`, que ahora busca hasta 10²⁴ km.
+- **Pivote y «arriba»** ✅: el centro de la órbita pasa del Sol al centro galáctico entre 2.000 y 40.000 años luz; la mirada sigue siendo −dir, solo se desplaza la cámara. El «arriba» gira hacia el norte galáctico entre 300 y 5.000 años luz, calculado aparte del marco del arrastre. Por encima de 3.000 años luz (2.000 al bajar) arrastrar gira alrededor del polo galáctico (marco `galaxy`), sin que la imagen dé un giro.
+- **Vuelta** ✅ (`Engine.leaveCosmos`): desde el cosmos, todo viaje (elegir un cuerpo, «Ir» a un eclipse o a un cometa, o `G` otra vez) vuelve primero a 600 UA y después hace lo pedido entero, también aterrizar. El viaje parte de la posición de escena, que allí se queda en el borde: sin esto la cámara saltaría de golpe. Verificado desde 120.000 años luz: a la Tierra, al Halley de 2061 (el mayor encogimiento por frame, un 7 %) y al eclipse de 2027 «desde el suelo» (aterriza a 10 km), sin posiciones no finitas.
+- Pendiente: `OrbitMode` orbitará también otras referencias cósmicas (Andrómeda, M87) con la misma lógica en km.
+- **Escalones** (Sistema solar · Vecindario · Vía Láctea · Grupo Local · Virgo · Red cósmica) como botones, con el viaje logarítmico de `focusOn` y el warp.
+- Distancias en UA → años luz → millones de años luz ✅ (`ui/format.ts`). Pendiente: la barra de escala.
+- En los niveles cósmicos se ocultan el vuelo libre y la barra de tiempo: la galaxia tarda ~230 millones de años en dar una vuelta y no hay nada que animar con el reloj. Si se anima algo (el giro del modelo), es artístico y con la fase reducida en la CPU.
+- Ficha para la Vía Láctea, Andrómeda y los cúmulos.
+
+### 14.6 Límites
+
+- La Vía Láctea vista desde fuera es un **modelo hecho con datos**: nadie la ha fotografiado desde fuera. Las posiciones de las demás galaxias son reales; su forma es una plantilla por tipo con su orientación real.
+- Rendimiento: con la galaxia llenando la pantalla, el aditivo es caro (sobredibujo). Sprites pequeños, LOD por densidad y un tope de impostores.
+- Licencias: los catálogos y panoramas de §14.4 son candidatos; hay que comprobar su licencia y registrarla en `docs/ASSETS.md` antes de usarlos.

@@ -5,6 +5,7 @@
  */
 import * as THREE from 'three/webgpu';
 import { cameraPosition, float, modelWorldMatrix, modelWorldMatrixInverse, uniform, vec3, vec4 } from 'three/tsl';
+import { handoff } from '../core/Handoff';
 import { horizonMask } from '../core/Horizon';
 import type { BodyData } from '../astro/bodies';
 import { spinAngle } from '../astro/ephemeris';
@@ -291,7 +292,7 @@ export abstract class BaseBody implements CelestialBody {
     const c = new THREE.Color(this.data.color);
     const gain = this.data.kind === 'star' ? 8 : 1.6;
     const world = modelWorldMatrix.mul(vec4(toCamera.mul(1.05), 1)).xyz;
-    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(gain).mul(this.markerAlpha).mul(horizonMask(world)), 1);
+    material.colorNode = vec4(vec3(c.r, c.g, c.b).mul(gain).mul(this.markerAlpha).mul(horizonMask(world)).mul(handoff.solar), 1);
     material.opacityNode = softDisc();
     const marker = new THREE.Sprite(material);
     marker.frustumCulled = false;

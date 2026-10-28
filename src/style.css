@@ -1608,6 +1608,13 @@ kbd {
   transition: color 0.2s;
 }
 
+/* Nombres de la capa cósmica (§14): sin cuerpo detrás, algo más claros. */
+#hud .label.marker {
+  color: var(--ink-2);
+  pointer-events: none;
+  cursor: default;
+}
+
 #hud .label::before {
   content: '';
   position: absolute;

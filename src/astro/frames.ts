@@ -34,3 +34,42 @@ export function raDecToVector(ra: number, dec: number): Vec3d {
   const cd = Math.cos(dec);
   return { x: cd * Math.cos(ra), y: cd * Math.sin(ra), z: Math.sin(dec) };
 }
+
+/**
+ * Ecuatorial J2000 (ICRS) → galáctico: filas = ejes galácticos (x al centro, z al polo
+ * norte) en ecuatoriales. Matriz de Hipparcos (ESA 1997, vol. 1, §1.5.3): polo norte
+ * galáctico en AR 192,85948°, Dec +27,12825° y longitud del polo celeste 122,93192°. Ver §14.3.
+ */
+const EQ_TO_GAL = [
+  [-0.0548755604162154, -0.873437090234885, -0.4838350155487132],
+  [0.4941094278755837, -0.4448296299600112, 0.7469822444972189],
+  [-0.8676661490190047, -0.1980763734312015, 0.4559837761750669],
+] as const;
+
+export function equatorialToGalactic(v: Vec3d): Vec3d {
+  const [a, b, c] = EQ_TO_GAL;
+  return {
+    x: a[0] * v.x + a[1] * v.y + a[2] * v.z,
+    y: b[0] * v.x + b[1] * v.y + b[2] * v.z,
+    z: c[0] * v.x + c[1] * v.y + c[2] * v.z,
+  };
+}
+
+/** Galáctico → ecuatorial J2000 (la traspuesta). */
+export function galacticToEquatorial(v: Vec3d): Vec3d {
+  const [a, b, c] = EQ_TO_GAL;
+  return {
+    x: a[0] * v.x + b[0] * v.y + c[0] * v.z,
+    y: a[1] * v.x + b[1] * v.y + c[1] * v.z,
+    z: a[2] * v.x + b[2] * v.y + c[2] * v.z,
+  };
+}
+
+/** Longitud y latitud galácticas (rad) → vector unitario galáctico. */
+export function lbToVector(l: number, b: number): Vec3d {
+  const cb = Math.cos(b);
+  return { x: cb * Math.cos(l), y: cb * Math.sin(l), z: Math.sin(b) };
+}
+
+/** Galáctico → ejes de escena (por el ecuatorial y la eclíptica, como las estrellas). */
+export const galacticToScene = (v: Vec3d): Vec3d => eclToScene(equatorialToEcliptic(galacticToEquatorial(v)));

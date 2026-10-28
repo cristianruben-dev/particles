@@ -11,6 +11,7 @@
  */
 import type { Node } from 'three/webgpu';
 import { float, log, max, mix, pow, select, uniform } from 'three/tsl';
+import { LY_KM } from '../astro/units';
 
 export type ScaleModeName = 'compressed' | 'real';
 
@@ -115,7 +116,8 @@ export class ScaleSystem {
    */
   inverseLocalDistance(parent: ScaleParent, sceneDistance: number): number {
     if (sceneDistance <= 0) return 0;
-    let lo = Math.log(parent.radiusKm * 1e-12), hi = Math.log(1e13);
+    // Hasta 10²⁴ km: más allá del sistema solar la cámara sigue en km (capa cósmica, §14).
+    let lo = Math.log(parent.radiusKm * 1e-12), hi = Math.log(1e24);
     for (let i = 0; i < 64; i++) {
       const mid = (lo + hi) / 2;
       if (this.localDistance(parent, Math.exp(mid)) < sceneDistance) lo = mid;
@@ -141,6 +143,14 @@ export class ScaleSystem {
     const powZone = hc.add(x0.div(q).mul(pow(x.div(c), q).sub(1)));
     const h = select(x.lessThanEqual(x0), x, select(x.lessThanEqual(c), logZone, powZone));
     return mix(radiusC.mul(h), distanceKm.div(float(KM_PER_UNIT_REAL)), this.blendNode) as FloatNode;
+  }
+
+  /**
+   * Capa cósmica (§14.2): km → años luz, solo para lo que sube a la GPU. En el cosmos no hay
+   * escala comprimida (las galaxias ya se ven bien en la real): no depende del modo.
+   */
+  cosmic(km: number): number {
+    return km / LY_KM;
   }
 
   private radiusCompressed(km: number): number {

@@ -1,7 +1,7 @@
 /**
  * Formato de cifras, distancias y fechas en español para la UI.
  */
-import { AU_KM } from '../astro/units';
+import { AU_KM, LY_KM } from '../astro/units';
 
 export interface Quantity {
   value: string;
@@ -12,6 +12,10 @@ const num = (x: number, digits: number) => x.toLocaleString('es', { maximumFract
 
 /** Distancia con su unidad separada (para maquetarlas por separado). */
 export function distanceParts(km: number): Quantity {
+  // Fuera del sistema solar (§14), en años luz.
+  const ly = km / LY_KM;
+  if (ly >= 1e6) return { value: num(ly / 1e6, 2), unit: 'M a. l.' };
+  if (ly >= 0.05) return { value: num(ly, ly >= 100 ? 0 : ly >= 10 ? 1 : 2), unit: 'a. l.' };
   if (km >= 0.1 * AU_KM) return { value: num(km / AU_KM, km >= 10 * AU_KM ? 1 : 2), unit: 'UA' };
   if (km >= 1e6) return { value: num(km / 1e6, 2), unit: 'M km' };
   if (km >= 100) return { value: num(Math.round(km), 0), unit: 'km' };

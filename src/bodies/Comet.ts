@@ -21,6 +21,7 @@ import type { BodyData } from '../astro/bodies';
 import { GM_SUN, cometActivity, cometElementsAt, cometPosition, cometVelocity, propagateUniversal, type CometElements } from '../astro/comets';
 import { eclToScene } from '../astro/frames';
 import { terrestrialTimeMs } from '../astro/units';
+import { handoff } from '../core/Handoff';
 import { horizonMask } from '../core/Horizon';
 import { pixelAngle, softDisc, type Vec3Node } from '../particles/nodes';
 import { ParticleField } from '../particles/ParticleField';
@@ -92,7 +93,7 @@ export class Comet extends BaseBody {
       m.positionNode = local;
       m.scaleNode = pixelAngle.mul(px).div(this.objectScale);
       const world = modelWorldMatrix.mul(vec4(local, 1)).xyz;
-      m.colorNode = vec4(rgb.mul(cometLook.brightness).mul(horizonMask(world)), 1);
+      m.colorNode = vec4(rgb.mul(cometLook.brightness).mul(horizonMask(world)).mul(handoff.solar), 1);
       m.opacityNode = softDisc();
       this.fields.push(field);
       tier.addField(field, false, 0);

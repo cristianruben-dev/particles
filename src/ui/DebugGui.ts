@@ -13,6 +13,7 @@ import type { CelestialBody } from '../bodies/CelestialBody';
 import { RockyPlanet, rockyLook } from '../bodies/RockyPlanet';
 import { starLook } from '../bodies/Starfield';
 import { sunLook } from '../bodies/Sun';
+import { cosmicLook } from '../cosmos/CosmicLayer';
 import { disturbanceLook } from '../particles/Disturbance';
 import { particleLook } from '../particles/LodManager';
 import type { BloomControls } from '../postfx/Pipeline';
@@ -59,6 +60,10 @@ export function createDebugGui({ renderer, bloom, bodies }: DebugTargets): GUI {
   system.add(ringLook.brightness, 'value', 0, 3, 0.01).name('anillos brillo');
   system.add(beltLook.brightness, 'value', 0, 2, 0.01).name('asteroides brillo');
   system.add(orbitLook.brightness, 'value', 0, 3, 0.01).name('órbitas brillo');
+
+  const cosmos = gui.addFolder('Cosmos');
+  cosmos.add(cosmicLook.galaxy, 'value', 0, 0.15, 0.001).name('galaxia brillo');
+  cosmos.add(cosmicLook.dust, 'value', 0, 1, 0.01).name('polvo opacidad');
 
   const relief = gui.addFolder('Relieve');
   for (const body of bodies) {
